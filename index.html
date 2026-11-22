@@ -112,7 +112,7 @@ async function scan(){
 function syncWebSocketSubscriptions(){
  if(!state.running||!state.qualified.size){if(!state.qualified.size)closeWebSocket();return}
  const ws=state.ws;
- if(!ws||ws.readyState!==WebSocket.OPEN)return;
+ if(!ws||ws.readyState!==WebSocket.OPEN){connectWebSocket();return;}
  const wanted=new Set([...state.qualified.keys()].map(s=>s.toLowerCase()+'@kline_1m'));
  const add=[...wanted].filter(x=>!state.wsSubs.has(x)),remove=[...state.wsSubs].filter(x=>!wanted.has(x));
  if(remove.length){ws.send(JSON.stringify({method:'UNSUBSCRIBE',params:remove,id:++state.wsRequestId}));remove.forEach(x=>state.wsSubs.delete(x))}
