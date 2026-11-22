@@ -209,7 +209,7 @@ function clearOutcomeBoxes(){
 window.ScannerOutcomeBoxes={qualify:qualifyCoin,evaluateRsiContraction,trigger:triggerCoinOutcome,clear:clearOutcomeBoxes,render:renderOutcomeBoxes};
 
 let averageUniverseSeconds=0;
-const RSI_INTERVALS=['3m','5m','15m'], RSI_PERIOD=14, MACD_ALERT_INTERVAL='1m', rsiLastEvaluated=new Map();
+const RSI_INTERVALS=['3m','5m','15m'], RSI_PERIOD=14, MACD_ALERT_INTERVAL='1m', MACD_DIAGNOSTIC_WATCHLIST=['BLESSUSDT'], rsiLastEvaluated=new Map();
 const macdAlertState=new Map();
 const macdAlertDecisionRows=[];
 function recordMacdAlertDecision(symbol,priorHist,currentHist,qualified,decision,closeTime,priorCloseTime){
@@ -471,15 +471,20 @@ function connectRsiSocket(){
 async function syncRsiWebSockets(universe){
  rsiOverviewSymbols=universe.map(x=>x.symbol);
  renderRsiOverview();
- const symbols=new Set(universe.map(x=>x.symbol)),MONITOR_INTERVALS=[...new Set([...RSI_INTERVALS,MACD_ALERT_INTERVAL,...ST_INTERVALS,...EMA_ALERT_INTERVALS])],wanted=new Set([...symbols].flatMap(s=>MONITOR_INTERVALS.map(i=>rsiStreamName(s,i))));
+ const symbols=new Set(universe.map(x=>x.symbol)),MONITOR_INTERVALS=[...new Set([...RSI_INTERVALS,MACD_ALERT_INTERVAL,...ST_INTERVALS,...EMA_ALERT_INTERVALS])];
+ const diagnosticOnlySymbols=MACD_DIAGNOSTIC_WATCHLIST.filter(symbol=>!symbols.has(symbol));
+ const wanted=new Set([...symbols].flatMap(s=>MONITOR_INTERVALS.map(i=>rsiStreamName(s,i))));
+ for(const symbol of diagnosticOnlySymbols)wanted.add(rsiStreamName(symbol,MACD_ALERT_INTERVAL));
  const removed=[...rsiSocketWanted].filter(x=>!wanted.has(x)),added=[...wanted].filter(x=>!rsiSocketWanted.has(x));
  const activeHistoryKeys=new Set(universe.flatMap(coin=>MONITOR_INTERVALS.map(interval=>rsiHistoryKey(coin.symbol,interval))));
+ for(const symbol of diagnosticOnlySymbols)activeHistoryKeys.add(rsiHistoryKey(symbol,MACD_ALERT_INTERVAL));
  for(const key of rsiCandleHistory.keys())if(!activeHistoryKeys.has(key))rsiCandleHistory.delete(key);
  for(const stream of [...rsiWsAcked])if(!wanted.has(stream))rsiWsAcked.delete(stream);
  rsiSocketWanted=wanted;
  if(rsiSocketConnected){for(let i=0;i<removed.length;i+=100)sendRsiSubscription('UNSUBSCRIBE',removed.slice(i,i+100));for(let i=0;i<added.length;i+=100)sendRsiSubscription('SUBSCRIBE',added.slice(i,i+100))}
  else if(wanted.size)connectRsiSocket();
  const jobs=universe.flatMap(coin=>MONITOR_INTERVALS.filter(interval=>interval===MACD_ALERT_INTERVAL||ST_INTERVALS.includes(interval)||EMA_ALERT_INTERVALS.includes(interval)?!macdCandleHistory.has(rsiHistoryKey(coin.symbol,interval)):!rsiCandleHistory.has(rsiHistoryKey(coin.symbol,interval))).map(interval=>({coin,interval})));
+ for(const symbol of diagnosticOnlySymbols)if(!macdCandleHistory.has(rsiHistoryKey(symbol,MACD_ALERT_INTERVAL)))jobs.push({coin:{symbol},interval:MACD_ALERT_INTERVAL});
  const required=3;
  const seeded=await mapLimit(jobs,requestConcurrency,async job=>{
   const data=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(job.coin.symbol)+'&interval='+job.interval+'&limit=100');
