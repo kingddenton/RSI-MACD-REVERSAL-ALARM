@@ -186,6 +186,8 @@ function calculateRsiSeries(closes,period=RSI_PERIOD){
 }
 const rsiCandleHistory=new Map();
 let rsiSocket=null,rsiSocketConnected=false,rsiSocketWanted=new Set(),rsiReconnectTimer=null,rsiWsMessageId=1;
+const rsiWsPending=new Map();
+let rsiWsAckStreams=0,rsiWsAckErrors=0,rsiWsMessages=0,rsiWsLastMessage='Never',rsiWsLastEvent='None',rsiCycleSeeded=0,rsiCycleErrors=0;
 function rsiStreamName(symbol,interval){return symbol.toLowerCase()+'@kline_'+interval}
 function rsiHistoryKey(symbol,interval){return symbol+'|'+interval}
 function evaluateClosedRsi(symbol,interval,closedTime){
@@ -199,19 +201,46 @@ function evaluateClosedRsi(symbol,interval,closedTime){
  if(qualified)qualifyCoin(symbol,{reason:'RSI contracting',timeframe:interval,rsiPeriod:RSI_PERIOD,consecutiveContractions:required,rsiValues:recent,closedCandleTime:new Date(closedTime).toISOString(),source:'Binance Futures WebSocket'});
  return qualified;
 }
+function renderRsiDiagnostics(){
+ const stats=$('signalDiagnostics').querySelector('.stats');
+ if(!stats)return;
+ stats.innerHTML=
+ '<span>Cached RSI histories: <b>'+rsiCandleHistory.size+' / '+rsiSocketWanted.size+'</b></span>'+
+ '<span>Subscription ACK streams: <b>'+rsiWsAckStreams+' / '+rsiSocketWanted.size+'</b></span>'+
+ '<span>Live WebSocket messages: <b>'+rsiWsMessages+'</b></span>'+
+ '<span>Last message: <b>'+rsiWsLastMessage+'</b></span>'+
+ '<span>Last event: <b>'+rsiWsLastEvent+'</b></span>'+
+ '<span>Current-cycle seed errors: <b>'+rsiCycleErrors+'</b></span>'+
+ '<span>Total bootstrap errors: <b>'+rsiScanStats.errors+'</b></span>'+
+ '<span>Subscription errors: <b>'+rsiWsAckErrors+'</b></span>'+
+ '<span>Rule: <b>'+Math.max(1,Number($('rsiContractions').value)||3)+' consecutive declines</b></span>';
+}
 function handleRsiSocketMessage(event){
  let msg;try{msg=JSON.parse(event.data)}catch(e){return}
- const k=msg&&msg.k;if(!k||!k.x)return;
+ rsiWsMessages++;rsiWsLastMessage=new Date().toLocaleTimeString();
+ if(msg&&Object.prototype.hasOwnProperty.call(msg,'id')){
+  const pending=rsiWsPending.get(msg.id);
+  if(pending){rsiWsPending.delete(msg.id);if(msg.error)rsiWsAckErrors+=pending.streams.length;else rsiWsAckStreams+=pending.streams.length;rsiWsLastEvent=msg.error?'SUBSCRIPTION ERROR':'SUBSCRIPTION ACK';}
+  renderRsiDiagnostics();return;
+ }
+ const k=msg&&msg.k;
+ if(!k){rsiWsLastEvent=msg&&msg.e?String(msg.e):'CONTROL / OTHER';renderRsiDiagnostics();return}
+ rsiWsLastEvent='KLINE '+k.i+(k.x?' CLOSED':' OPEN');
+ if(!k.x){renderRsiDiagnostics();return}
  const symbol=String(k.s||'').toUpperCase(),interval=k.i,key=rsiHistoryKey(symbol,interval),history=rsiCandleHistory.get(key);
- if(!history)return;
- const closeTime=Number(k.T);if(closeTime<=history.lastClosedTime)return;
+ if(!history){renderRsiDiagnostics();return}
+ const closeTime=Number(k.T);if(closeTime<=history.lastClosedTime){renderRsiDiagnostics();return}
  history.closes.push(Number(k.c));if(history.closes.length>120)history.closes.shift();
  history.lastClosedTime=closeTime;rsiScanStats.checked++;
  evaluateClosedRsi(symbol,interval,closeTime);
- const stats=$('signalDiagnostics').querySelector('.stats');
- if(stats)stats.innerHTML='<span>Closed WebSocket candles: <b>'+rsiScanStats.checked+'</b></span><span>REST bootstrap errors: <b>'+rsiScanStats.errors+'</b></span><span>Rule: <b>'+Math.max(1,Number($('rsiContractions').value)||3)+' consecutive declines</b></span>';
+ renderRsiDiagnostics();
 }
-function sendRsiSubscription(method,streams){if(rsiSocketConnected&&streams.length)rsiSocket.send(JSON.stringify({method,params:streams,id:rsiWsMessageId++}))}
+function sendRsiSubscription(method,streams){
+ if(!rsiSocketConnected||!streams.length)return;
+ const id=rsiWsMessageId++;
+ rsiWsPending.set(id,{method,streams});
+ rsiSocket.send(JSON.stringify({method,params:streams,id}));
+}
 function connectRsiSocket(){
  if(rsiSocket&&[WebSocket.CONNECTING,WebSocket.OPEN].includes(rsiSocket.readyState))return;
  clearTimeout(rsiReconnectTimer);rsiSocket=new WebSocket('wss://fstream.binance.com/ws');
@@ -236,13 +265,13 @@ async function syncRsiWebSockets(universe){
   return {qualified:evaluateClosedRsi(job.coin.symbol,job.interval,lastClosedTime)};
  });
  const failures=seeded.output.filter(x=>x&&x.error);
+ rsiCycleSeeded=seeded.done;rsiCycleErrors=failures.length;
  rsiScanStats.errors+=failures.length;
  const sampleError=failures.length?String(failures[0].error):'None';
- const stats=$('signalDiagnostics').querySelector('.stats');
- if(stats)stats.innerHTML='<span>Closed WebSocket candles: <b>'+rsiScanStats.checked+'</b></span><span>New timeframe histories: <b>'+seeded.done+' / '+jobs.length+'</b></span><span>Bootstrap errors: <b>'+rsiScanStats.errors+'</b></span><span>Rule: <b>'+required+' consecutive declines</b></span>';
- $('signalDiagnostics').querySelector('.note').textContent=failures.length?'RSI WebSocket is configured, but REST history seeding failed. First error: '+sampleError:'Live RSI(14) qualification uses Binance Futures WebSockets for completed 3m, 5m and 15m candles. REST history seeding completed.';
- $('perfCache').textContent=rsiSocketConnected?'WebSocket connected':'WebSocket connecting';$('perfJobs').textContent=String(seeded.done);$('perfJobResults').textContent='0 / '+rsiScanStats.errors;
- setStatus(failures.length?'RSI history seed failed: '+sampleError:'RSI WebSocket monitoring active · '+symbols.size+' coins · '+wanted.size+' streams · seeded '+seeded.done+' new histories.',!!failures.length);
+ renderRsiDiagnostics();
+ $('signalDiagnostics').querySelector('.note').textContent=failures.length?'RSI history seeding had '+failures.length+' errors in this cycle. First error: '+sampleError:'Live RSI(14) qualification uses Binance Futures WebSockets for completed 3m, 5m and 15m candles. REST history is seeded only once per selected coin/timeframe.';
+ $('perfCache').textContent=rsiSocketConnected?'WebSocket connected':'WebSocket connecting';$('perfJobs').textContent=String(rsiCandleHistory.size);$('perfJobResults').textContent=rsiCycleSeeded+' seeded / '+rsiCycleErrors+' errors';
+ setStatus(failures.length?'RSI history seed failed: '+sampleError:'RSI WebSocket monitoring active · '+symbols.size+' coins · '+wanted.size+' streams · cached '+rsiCandleHistory.size+' histories.',!!failures.length);
 }
 function stopRsiWebSockets(){clearTimeout(rsiReconnectTimer);rsiSocketWanted.clear();if(rsiSocket){try{rsiSocket.close()}catch(e){}}rsiSocket=null;rsiSocketConnected=false}
 window.addEventListener('beforeunload',stopRsiWebSockets);
