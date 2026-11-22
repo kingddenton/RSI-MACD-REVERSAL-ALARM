@@ -111,9 +111,10 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
  <p class="note">All selected coins and their latest closed-candle RSI values. Qualification uses OR: any one timeframe at or above the threshold qualifies.</p>
  <div class="stats" id="rsiOverviewStats"></div>
  <div class="wrap"><table><thead><tr><th>Symbol</th><th>3m RSI</th><th>5m RSI</th><th>15m RSI</th><th>Status</th><th>Qualifying TF</th></tr></thead><tbody id="rsiOverviewRows"><tr><td colspan="6" class="muted">Waiting for RSI histories.</td></tr></tbody></table></div>
- <h3 style="margin:16px 0 6px;font-size:14px">MACD DIAGNOSTICS · 12, 26, 9</h3>
- <p class="note">Diagnostic only. DIF, DEA and histogram are calculated from the same closed-candle histories. MACD does not qualify coins or trigger alerts.</p>
- <div class="wrap"><table><thead><tr><th>Symbol</th><th>Timeframe</th><th>DIF</th><th>DEA</th><th>Histogram</th><th>Position</th></tr></thead><tbody id="macdDiagnosticRows"><tr><td colspan="6" class="muted">Waiting for closed-candle MACD calculations.</td></tr></tbody></table></div>
+ <h3 style="margin:16px 0 6px;font-size:14px">FULL-UNIVERSE MACD DATA · 12, 26, 9</h3>
+ <p class="note">One row per selected coin. Values use completed candles only. Each timeframe shows DIF, DEA and histogram. BLESSUSDT is also included as a diagnostic-only watch.</p>
+ <div class="stats" id="macdDiagnosticStats"><span>Waiting for MACD histories…</span></div>
+ <div class="wrap"><table><thead><tr><th rowspan="2">#</th><th rowspan="2">Symbol</th><th colspan="3">1m</th><th colspan="3">3m</th><th colspan="3">5m</th><th colspan="3">15m</th></tr><tr><th>DIF</th><th>DEA</th><th>Hist</th><th>DIF</th><th>DEA</th><th>Hist</th><th>DIF</th><th>DEA</th><th>Hist</th><th>DIF</th><th>DEA</th><th>Hist</th></tr></thead><tbody id="macdDiagnosticRows"><tr><td colspan="14" class="muted">Waiting for closed-candle MACD calculations.</td></tr></tbody></table></div>
  <h3 style="margin:16px 0 6px;font-size:14px">MACD ALERT DECISIONS · 1M</h3>
  <p class="note">Every processed completed 1m candle: prior/current histogram, histogram change, qualification at evaluation, and the two candle-close times. “NO BASELINE” or “NO HISTORY” identifies missing scanner state.</p>
  <div class="wrap"><table><thead><tr><th>#</th><th>Symbol</th><th>Previous H</th><th>Current H</th><th>Δ H</th><th>Qualified?</th><th>Decision</th><th>Prior → current close</th></tr></thead><tbody id="macdAlertDecisionRows"><tr><td colspan="8" class="muted">Waiting for 1m MACD decisions.</td></tr></tbody></table></div>
@@ -225,6 +226,7 @@ function recordMacdAlertDecision(symbol,priorHist,currentHist,qualified,decision
 let rsiScanStats={checked:0,qualified:0,errors:0};
 const rsiDecisionRows=new Map();
 const rsiDecisionStats={evaluations:0,qualified:0,rejected:0,waiting:0};
+const MACD_DIAGNOSTIC_INTERVALS=['1m','3m','5m','15m'];
 const macdDiagnosticRows=new Map();
 let rsiOverviewSymbols=[];
 function emaSeries(values,period){
@@ -272,24 +274,32 @@ function calculateMacdDiagnostic(closes){
 }
 function updateMacdDiagnostic(symbol){
  const values={};
- for(const tf of RSI_INTERVALS){
+ for(const tf of MACD_DIAGNOSTIC_INTERVALS){
   const history=macdCandleHistory.get(rsiHistoryKey(symbol,tf));
-  values[tf]=history?calculateMacdDiagnostic(history.closes):null;
+  const macd=history?calculateMacdDiagnostic(history.closes):null;
+  values[tf]={macd,lastClosedTime:history?history.lastClosedTime:null,closes:history?history.closes.length:0};
  }
- macdDiagnosticRows.delete(symbol);
  macdDiagnosticRows.set(symbol,values);
- while(macdDiagnosticRows.size>60)macdDiagnosticRows.delete(macdDiagnosticRows.keys().next().value);
  renderMacdDiagnostics();
 }
 function renderMacdDiagnostics(){
- const rows=[];
- for(const [symbol,values] of macdDiagnosticRows){
-  for(const tf of RSI_INTERVALS){
-   const v=values[tf];
-   rows.push('<tr><td><b>'+symbol+'</b></td><td>'+tf+'</td><td>'+(v?v.dif.toFixed(6):'—')+'</td><td>'+(v?v.dea.toFixed(6):'—')+'</td><td>'+(v?v.hist.toFixed(6):'—')+'</td><td>'+(v?v.position:'Waiting for 26+ closes')+'</td></tr>');
+ const symbols=[...new Set([...rsiOverviewSymbols,...MACD_DIAGNOSTIC_WATCHLIST])];
+ let ready=0;
+ const rows=symbols.map((symbol,index)=>{
+  const values=macdDiagnosticRows.get(symbol)||{};
+  let cells='';
+  for(const tf of MACD_DIAGNOSTIC_INTERVALS){
+   const item=values[tf],v=item&&item.macd;
+   if(v)ready++;
+   const fmt=n=>Number.isFinite(n)?n.toExponential(5):'—';
+   cells+='<td>'+fmt(v&&v.dif)+'</td><td>'+fmt(v&&v.dea)+'</td><td title="'+(item&&item.lastClosedTime?new Date(item.lastClosedTime).toLocaleString():'No completed candle')+'">'+fmt(v&&v.hist)+'</td>';
   }
- }
- $('macdDiagnosticRows').innerHTML=rows.length?rows.reverse().join(''):'<tr><td colspan="6" class="muted">Waiting for closed-candle MACD calculations.</td></tr>';
+  return '<tr><td>'+(index+1)+'</td><td><b>'+symbol+'</b></td>'+cells+'</tr>';
+ });
+ const expected=symbols.length*MACD_DIAGNOSTIC_INTERVALS.length;
+ const stats=$('macdDiagnosticStats');
+ if(stats)stats.innerHTML='<span>Coins displayed: <b>'+symbols.length+'</b></span><span>MACD values ready: <b>'+ready+' / '+expected+'</b></span><span>Pending: <b>'+(expected-ready)+'</b></span>';
+ $('macdDiagnosticRows').innerHTML=rows.length?rows.join(''):'<tr><td colspan="14" class="muted">Waiting for selected universe.</td></tr>';
 }
 function calculateRsiSeries(closes,period=RSI_PERIOD){
  const out=[]; if(closes.length<=period)return out;
@@ -422,7 +432,7 @@ function handleRsiSocketMessage(event){
  rsiWsKlineMessages++;rsiWsLastEvent='KLINE '+k.i+(k.x?' CLOSED':' OPEN');
  if(!k.x){renderRsiDiagnostics();return}
  const symbol=String(k.s||'').toUpperCase(),interval=k.i,key=rsiHistoryKey(symbol,interval),history=rsiCandleHistory.get(key),macdHistory=macdCandleHistory.get(key);
- if(interval===MACD_ALERT_INTERVAL){const closeTime=Number(k.T),prior=macdAlertState.get(symbol),isQualified=outcomeState.qualified.has(symbol);if(!macdHistory){recordMacdAlertDecision(symbol,prior?prior.hist:null,null,isQualified,'NO HISTORY · 1M CANDLE RECEIVED',closeTime,prior?prior.lastClosedTime:null);renderRsiDiagnostics();return}if(closeTime<=macdHistory.lastClosedTime){recordMacdAlertDecision(symbol,prior?prior.hist:null,null,isQualified,'DUPLICATE / STALE CANDLE IGNORED',closeTime,prior?prior.lastClosedTime:null);renderRsiDiagnostics();return}macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift()}macdHistory.lastClosedTime=closeTime;const macd=calculateMacdDiagnostic(macdHistory.closes);if(macd&&prior){const crossed=prior.hist>=0&&macd.hist<0;const decision=crossed?(isQualified?'ALERT FIRED':'REJECTED · NOT QUALIFIED'):(macd.hist<0?'ALREADY RED · NO NEW CROSS':'NO CROSS');recordMacdAlertDecision(symbol,prior.hist,macd.hist,isQualified,decision,closeTime,prior.lastClosedTime);if(crossed&&isQualified)triggerCoinOutcome(symbol,'macdRed',{timeframes:{'1m':macd},interval:'1m',reason:'Closed 1m MACD histogram changed green to red',previousHistogram:prior.hist,histogram:macd.hist});}else if(macd){recordMacdAlertDecision(symbol,prior?prior.hist:null,macd.hist,isQualified,'NO PRIOR BASELINE',closeTime,prior?prior.lastClosedTime:null);}else{recordMacdAlertDecision(symbol,prior?prior.hist:null,null,isQualified,'MACD NOT READY · NEEDS 34+ CLOSES',closeTime,prior?prior.lastClosedTime:null)}if(macd)macdAlertState.set(symbol,{hist:macd.hist,lastClosedTime:closeTime});
+ if(interval===MACD_ALERT_INTERVAL){const closeTime=Number(k.T),prior=macdAlertState.get(symbol),isQualified=outcomeState.qualified.has(symbol);if(!macdHistory){recordMacdAlertDecision(symbol,prior?prior.hist:null,null,isQualified,'NO HISTORY · 1M CANDLE RECEIVED',closeTime,prior?prior.lastClosedTime:null);renderRsiDiagnostics();return}if(closeTime<=macdHistory.lastClosedTime){recordMacdAlertDecision(symbol,prior?prior.hist:null,null,isQualified,'DUPLICATE / STALE CANDLE IGNORED',closeTime,prior?prior.lastClosedTime:null);renderRsiDiagnostics();return}macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift()}macdHistory.lastClosedTime=closeTime;const macd=calculateMacdDiagnostic(macdHistory.closes);if(macd&&prior){const crossed=prior.hist>=0&&macd.hist<0;const decision=crossed?(isQualified?'ALERT FIRED':'REJECTED · NOT QUALIFIED'):(macd.hist<0?'ALREADY RED · NO NEW CROSS':'NO CROSS');recordMacdAlertDecision(symbol,prior.hist,macd.hist,isQualified,decision,closeTime,prior.lastClosedTime);if(crossed&&isQualified)triggerCoinOutcome(symbol,'macdRed',{timeframes:{'1m':macd},interval:'1m',reason:'Closed 1m MACD histogram changed green to red',previousHistogram:prior.hist,histogram:macd.hist});}else if(macd){recordMacdAlertDecision(symbol,prior?prior.hist:null,macd.hist,isQualified,'NO PRIOR BASELINE',closeTime,prior?prior.lastClosedTime:null);}else{recordMacdAlertDecision(symbol,prior?prior.hist:null,null,isQualified,'MACD NOT READY · NEEDS 34+ CLOSES',closeTime,prior?prior.lastClosedTime:null)}if(macd)macdAlertState.set(symbol,{hist:macd.hist,lastClosedTime:closeTime});updateMacdDiagnostic(symbol);
  if(ST_INTERVALS.includes(interval)){const st=calculateSupertrendDirection(macdHistory.rows||[]),stPrior=stAlertState.get(key);if(st&&stPrior&&outcomeState.qualified.has(symbol)&&stPrior.direction===1&&st.direction===-1)triggerCoinOutcome(symbol,'stRed',{interval,reason:'Completed candle Supertrend flipped green to red',atrPeriod:10,multiplier:3});if(st)stAlertState.set(key,{direction:st.direction,lastClosedTime:closeTime});}
  if(EMA_ALERT_INTERVALS.includes(interval)){const ema=calculateEmaSignal(macdHistory.closes),emaPrior=emaAlertState.get(key);if(ema&&emaPrior&&outcomeState.qualified.has(symbol)&&ema.crossedDown)triggerCoinOutcome(symbol,'emaBearish',{interval,reason:'EMA 7 crossed below EMA 25 with EMA 99 above both',ema7:ema.fast,ema25:ema.mid,ema99:ema.slow});if(ema)emaAlertState.set(key,{bearish:ema.bearish,lastClosedTime:closeTime});}
  renderRsiDiagnostics();return}
@@ -502,6 +512,7 @@ async function syncRsiWebSockets(universe){
  // Reconcile every selected coin only after all three timeframe histories have been seeded.
  // This makes the outcome box reflect the same complete data set as the full-universe RSI overview.
  for(const coin of universe){
+  updateMacdDiagnostic(coin.symbol);
   rsiLastEvaluated.delete(String(coin.symbol).toUpperCase()+'|ANY');
   evaluateAllTimeframeRsi(coin.symbol);
   updateMacdDiagnostic(coin.symbol);
