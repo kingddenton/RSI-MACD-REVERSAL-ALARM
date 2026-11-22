@@ -421,13 +421,13 @@ function handleRsiSocketMessage(event){
    if(ema&&prior&&outcomeState.qualified.has(symbol)&&ema.crossedDown){triggerCoinOutcome(symbol,'emaBearish',{interval,reason:'EMA 7 crossed below EMA 25 with EMA 99 above both',ema7:ema.fast,ema25:ema.mid,ema99:ema.slow});}
    if(ema)emaAlertState.set(key,{bearish:ema.bearish,lastClosedTime:closeTime});
   }
-  renderRsiDiagnostics();return;
+  renderRsiDiagnostics();if(!RSI_INTERVALS.includes(interval))return;
  }
  if(!history){renderRsiDiagnostics();return}
  const closeTime=Number(k.T);if(closeTime<=history.lastClosedTime){renderRsiDiagnostics();return}
  rsiWsClosedCandles++;history.closes.push(Number(k.c));if(history.closes.length>120)history.closes.shift();
  history.lastClosedTime=closeTime;
- if(macdHistory){macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();macdHistory.lastClosedTime=closeTime;}
+ if(macdHistory&&!ST_INTERVALS.includes(interval)&&!EMA_ALERT_INTERVALS.includes(interval)){macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift()}macdHistory.lastClosedTime=closeTime;}
  rsiScanStats.checked++;
  evaluateClosedRsi(symbol,interval,closeTime);
  updateMacdDiagnostic(symbol);
