@@ -103,8 +103,9 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
   <button id="btcWsStop" class="secondary" disabled>STOP TEST</button>
   <span id="btcWsStatus" class="muted">Test idle</span>
  </div>
+ <div class="stats" id="rsiRuntimeStats"></div>
  <div class="wrap" style="margin:10px 0"><table><thead><tr><th>TIME</th><th>MESSAGE</th><th>DETAIL</th></tr></thead><tbody id="btcWsLog"><tr><td colspan="3" class="muted">Run the isolated BTC test to inspect raw Binance events.</td></tr></tbody></table></div>
- <div class="stats"><span>RSI evaluations: <b id="rsiEvalCount">0</b></span><span>Qualified: <b id="rsiQualifiedCount">0</b></span><span>Below threshold: <b id="rsiRejectedCount">0</b></span><span>Waiting for histories: <b id="rsiWaitingCount">0</b></span></div>
+ <div class="stats" id="rsiDecisionStats"><span>RSI evaluations: <b id="rsiEvalCount">0</b></span><span>Qualified: <b id="rsiQualifiedCount">0</b></span><span>Below threshold: <b id="rsiRejectedCount">0</b></span><span>Waiting for histories: <b id="rsiWaitingCount">0</b></span></div>
  <div class="wrap" style="margin-top:10px"><table><thead><tr><th>Symbol</th><th>Stage</th><th>Timeframe</th><th>Observed value</th><th>Decision / reason</th></tr></thead><tbody id="rsiDecisionRows"><tr><td colspan="5" class="muted">Waiting for the first closed-candle evaluation.</td></tr></tbody></table></div>
  <h3 style="margin:16px 0 6px;font-size:14px">LIVE RSI OVERVIEW · RSI(14)</h3>
  <p class="note">All selected coins and their latest closed-candle RSI values. Qualification uses OR: any one timeframe at or above the threshold qualifies.</p>
@@ -342,7 +343,7 @@ function evaluateClosedRsi(symbol,interval,closedTime){
  return evaluateAllTimeframeRsi(symbol);
 }
 function renderRsiDiagnostics(){
- const stats=$('signalDiagnostics').querySelector('.stats');
+ const stats=$('rsiRuntimeStats');
  if(!stats)return;
  stats.innerHTML=
  '<span>Cached RSI histories: <b>'+rsiCandleHistory.size+' / '+rsiSocketWanted.size+'</b></span>'+
