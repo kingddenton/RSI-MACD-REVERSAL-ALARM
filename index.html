@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RSI–MACD Reversal Alarm</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121c2d;--panel2:#18253a;--line:#293950;--text:#e8eef7;--muted:#9aabc1;--green:#25c58a;--red:#ff6474;--amber:#f2bd55;--blue:#72a7ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:1400px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+h1{font-size:24px;margin:0;font-weight:750}.sub{color:var(--muted);font-size:13px;margin-top:3px}
+.status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}.dot{width:9px;height:9px;border-radius:50%;background:#66758b}.dot.on{background:var(--green);box-shadow:0 0 10px #25c58a88}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px;margin-bottom:14px}
+h2{font-size:17px;margin:0 0 12px}.settings{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:12px;align-items:end}
+label{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}input,select{width:100%;background:#0d1727;border:1px solid var(--line);border-radius:8px;color:var(--text);padding:9px;font:inherit;min-width:0}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}button{border:1px solid var(--line);border-radius:8px;padding:9px 14px;background:var(--panel2);color:var(--text);font-weight:650;cursor:pointer}button.primary{background:#1d6b55;border-color:#23866a}button:disabled{opacity:.45;cursor:not-allowed}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.boxhead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.count{background:var(--panel2);padding:3px 9px;border-radius:20px;color:var(--muted);font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;color:var(--muted);font-weight:600;padding:9px 7px;border-bottom:1px solid var(--line);white-space:nowrap}td{padding:10px 7px;border-bottom:1px solid #223148;white-space:nowrap}tbody tr:last-child td{border-bottom:0}.coin{font-weight:750;font-size:14px}.green{color:var(--green)}.red{color:var(--red)}.amber{color:var(--amber)}.empty{text-align:center;color:var(--muted);padding:24px 8px}.alarmrow{background:#351b2a}.small{font-size:11px;color:var(--muted)}.footer{color:var(--muted);font-size:12px;margin:10px 2px}.log{max-height:110px;overflow:auto;color:var(--muted);font-size:12px}.log div{padding:3px 0;border-bottom:1px solid #223148}
+@media(max-width:850px){.settings{grid-template-columns:repeat(3,minmax(0,1fr))}.grid{grid-template-columns:1fr}}
+@media(max-width:480px){.wrap{padding:10px}.settings{grid-template-columns:repeat(2,minmax(0,1fr))}h1{font-size:21px}.panel{padding:12px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+ <header class="top"><div><h1>RSI–MACD Reversal Alarm</h1><div class="sub">Binance USDⓈ-M · USDT perpetuals · Closed-candle signals only</div></div><div class="status"><span id="dot" class="dot"></span><span id="status">Stopped</span><span>·</span><span id="lastScan">Not scanned yet</span></div></header>
+ <section class="panel">
+  <h2>Qualification settings</h2>
+  <div class="settings">
+   <div><label for="rsiPeriod">RSI period</label><input id="rsiPeriod" type="number" min="2" max="50" value="14"></div>
+   <div><label for="rsi3">3M RSI threshold</label><input id="rsi3" type="number" min="1" max="99" step=".1" value="70"></div>
+   <div><label for="rsi5">5M RSI threshold</label><input id="rsi5" type="number" min="1" max="99" step=".1" value="70"></div>
+   <div><label for="rsi15">15M RSI threshold</label><input id="rsi15" type="number" min="1" max="99" step=".1" value="70"></div>
+   <div><label for="maxCoins">Maximum universe</label><select id="maxCoins"><option>10</option><option selected>20</option><option>30</option><option>50</option></select></div>
+   <div><label for="minVolume">Min 24H quote volume (USDT)</label><input id="minVolume" type="number" min="0" step="100000" value="2000000"></div>
+  </div>
+  <div class="actions"><button id="start" class="primary">Start monitoring</button><button id="once">Scan once</button><button id="stop" disabled>Stop</button><button id="save">Save settings</button><button id="clear">Clear alarms</button></div>
+  <div class="footer">A coin qualifies when ANY one of its 3M, 5M or 15M closed-candle RSI values reaches its own threshold. Qualification is latched until the 1M MACD alarm fires.</div>
+ </section>
+ <div class="grid">
+  <section class="panel"><div class="boxhead"><h2>Qualified coins · 1M MACD monitoring</h2><span class="count" id="qualifiedCount">0 monitoring</span></div>
+   <div style="overflow-x:auto"><table><thead><tr><th>Coin</th><th>Trigger TF</th><th>RSI at trigger</th><th>Latest 1M MACD</th><th>Qualified</th></tr></thead><tbody id="qualified"><tr><td colspan="5" class="empty">No qualified coins yet</td></tr></tbody></table></div>
+  </section>
+  <section class="panel"><div class="boxhead"><h2>MACD red alarms</h2><span class="count" id="alarmCount">0 alarms</span></div>
+   <div style="overflow-x:auto"><table><thead><tr><th>Coin</th><th>Trigger TF</th><th>RSI at trigger</th><th>1M MACD change</th><th>Alarm time</th></tr></thead><tbody id="alarms"><tr><td colspan="5" class="empty">No alarms yet</td></tr></tbody></table></div>
+  </section>
+ </div>
+ <section class="panel"><div class="boxhead"><h2>Activity</h2><span class="count" id="universeCount">Universe: —</span></div><div class="log" id="log"><div>Ready. Start monitoring or run a one-time scan.</div></div></section>
+ <div class="footer">MACD colour convention: green = histogram rising versus the previous completed 1M candle; red = histogram falling. An alarm requires a confirmed green-to-red transition, not a zero-line cross. Signals are informational only; no orders are placed.</div>
+</div>
+<script>
+(() => {
+'use strict';
+const API='https://fapi.binance.com';
+const $=id=>document.getElementById(id);
+const state={running:false,scanBusy:false,monitorBusy:false,universe:[],qualified:new Map(),alarms:[],timer:null,monitorTimer:null,exchangeReady:false};
+const settings=()=>({period:clamp(+$('rsiPeriod').value,2,50,14),r3:clamp(+$('rsi3').value,1,99,70),r5:clamp(+$('rsi5').value,1,99,70),r15:clamp(+$('rsi15').value,1,99,70),max:clamp(+$('maxCoins').value,1,50,20),volume:Math.max(0,+$('minVolume').value||0)});
+function clamp(v,min,max,def){return Number.isFinite(v)?Math.min(max,Math.max(min,v)):def}
+function log(msg){const d=document.createElement('div');d.textContent=new Date().toLocaleTimeString()+' · '+msg;$('log').prepend(d);while($('log').children.length>40)$('log').lastChild.remove()}
+function setStatus(s,on=state.running){$('status').textContent=s;$('dot').classList.toggle('on',on)}
+async function getJSON(path){const r=await fetch(API+path);if(!r.ok)throw new Error('Binance HTTP '+r.status);return r.json()}
+async function getUniverse(){
+ const [info,tickers]=await Promise.all([state.exchangeReady?Promise.resolve(null):getJSON('/fapi/v1/exchangeInfo'),getJSON('/fapi/v1/ticker/24hr')]);
+ if(info){state.allowed=new Set(info.symbols.filter(x=>x.status==='TRADING'&&x.contractType==='PERPETUAL'&&x.quoteAsset==='USDT').map(x=>x.symbol));state.exchangeReady=true}
+ const s=settings();state.universe=tickers.filter(t=>state.allowed.has(t.symbol)&&+t.quoteVolume>=s.volume).sort((a,b)=>+b.quoteVolume-+a.quoteVolume).slice(0,s.max);
+ $('universeCount').textContent='Universe: '+state.universe.length;
+}
+async function mapLimit(items,limit,fn){let i=0;const workers=Array.from({length:Math.min(limit,items.length)},async()=>{while(i<items.length){const n=i++;try{await fn(items[n])}catch(e){log(items[n].symbol+': '+e.message)}}});await Promise.all(workers)}
+async function klines(symbol,interval,limit=100){return getJSON('/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+interval+'&limit='+limit)}
+function closed(rows){const now=Date.now();return rows.filter(k=>+k[6]<now)}
+function rsi(rows,period){const c=closed(rows).map(k=>+k[4]);if(c.length<period+1)return null;let gain=0,loss=0;for(let i=1;i<=period;i++){const d=c[i]-c[i-1];if(d>0)gain+=d;else loss-=d}let ag=gain/period,al=loss/period;for(let i=period+1;i<c.length;i++){const d=c[i]-c[i-1];ag=(ag*(period-1)+Math.max(d,0))/period;al=(al*(period-1)+Math.max(-d,0))/period}return al===0?100:100-100/(1+ag/al)}
+function ema(values,period){const k=2/(period+1);let e=values[0];const out=[e];for(let i=1;i<values.length;i++){e=values[i]*k+e*(1-k);out.push(e)}return out}
+function macd(rows){const ks=closed(rows);const closes=ks.map(k=>+k[4]);if(closes.length<40)return null;const fast=ema(closes,12),slow=ema(closes,26),line=fast.map((v,i)=>v-slow[i]),signal=ema(line,9),hist=line.map((v,i)=>v-signal[i]);const n=hist.length;return {hist:hist[n-1],prev:hist[n-2],color:hist[n-1]>hist[n-2]?'green':'red',previousColor:hist[n-2]>hist[n-3]?'green':'red',candleTime:+ks[n-1][6]}}
+async function qualifySymbol(t){
+ const s=settings(),symbol=t.symbol;
+ if(state.qualified.has(symbol)||state.alarms.some(a=>a.symbol===symbol))return;
+ const [a,b,c]=await Promise.all([klines(symbol,'3m',s.period+35),klines(symbol,'5m',s.period+35),klines(symbol,'15m',s.period+35)]);
+ const vals=[['3M',rsi(a,s.period),s.r3],['5M',rsi(b,s.period),s.r5],['15M',rsi(c,s.period),s.r15]];
+ const hit=vals.filter(x=>x[1]!==null&&x[1]>=x[2]).sort((x,y)=>(y[1]-y[2])-(x[1]-x[2]))[0];
+ if(!hit)return;
+ const m=macd(await klines(symbol,'1m',100));
+ if(!m)return;
+ state.qualified.set(symbol,{symbol,tf:hit[0],rsi:hit[1],qualifiedAt:Date.now(),lastHistTime:m.candleTime,lastColor:m.color,displayColor:m.color});
+ log(symbol+' qualified on '+hit[0]+' RSI ('+hit[1].toFixed(1)+'). 1M MACD monitoring started.');
+ render();
+}
+async function scan(){
+ if(state.scanBusy)return;state.scanBusy=true;setStatus('Scanning…');
+ try{await getUniverse();await mapLimit(state.universe,8,qualifySymbol);$('lastScan').textContent='Last scan '+new Date().toLocaleTimeString()}
+ catch(e){log('Scan error: '+e.message);setStatus('Connection error',false)}
+ finally{state.scanBusy=false;if(state.running)setStatus('Monitoring')}
+}
+async function monitor(){
+ if(state.monitorBusy||!state.qualified.size)return;state.monitorBusy=true;
+ try{const list=[...state.qualified.values()];await mapLimit(list,8,async q=>{
+  const m=macd(await klines(q.symbol,'1m',100));if(!m||m.candleTime<=q.lastHistTime)return;
+  q.lastHistTime=m.candleTime;q.displayColor=m.color;
+  if(q.lastColor==='green'&&m.color==='red'){
+   const alarm={...q,alarmAt:Date.now(),hist:m.hist};state.alarms.unshift(alarm);state.qualified.delete(q.symbol);playAlarm();log('ALARM: '+q.symbol+' 1M MACD histogram turned green → red.');}
+  else q.lastColor=m.color;
+ });render()}catch(e){log('1M monitor error: '+e.message)}finally{state.monitorBusy=false}
+}
+function playAlarm(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;const c=new C();[660,880,660].forEach((f,i)=>{const o=c.createOscillator(),g=c.createGain();o.frequency.value=f;o.type='sine';g.gain.setValueAtTime(.0001,c.currentTime+i*.22);g.gain.exponentialRampToValueAtTime(.16,c.currentTime+i*.22+.025);g.gain.exponentialRampToValueAtTime(.0001,c.currentTime+i*.22+.18);o.connect(g);g.connect(c.destination);o.start(c.currentTime+i*.22);o.stop(c.currentTime+i*.22+.2)});setTimeout(()=>c.close(),1200)}catch(e){log('Audio unavailable; check browser sound permissions')}}
+function cell(v,cls=''){const td=document.createElement('td');td.textContent=v; if(cls)td.className=cls;return td}
+function render(){
+ const q=$('qualified'),a=$('alarms');q.replaceChildren();a.replaceChildren();
+ const qs=[...state.qualified.values()].sort((x,y)=>y.qualifiedAt-x.qualifiedAt);
+ if(!qs.length){const tr=document.createElement('tr');const td=cell('No qualified coins yet','empty');td.colSpan=5;tr.append(td);q.append(tr)}
+ qs.forEach(x=>{const tr=document.createElement('tr');tr.append(cell(x.symbol,'coin'),cell(x.tf),cell(x.rsi.toFixed(1)),cell(x.displayColor==='green'?'GREEN':'RED',x.displayColor),cell(new Date(x.qualifiedAt).toLocaleTimeString()));q.append(tr)});
+ if(!state.alarms.length){const tr=document.createElement('tr');const td=cell('No alarms yet','empty');td.colSpan=5;tr.append(td);a.append(tr)}
+ state.alarms.forEach(x=>{const tr=document.createElement('tr');tr.className='alarmrow';tr.append(cell(x.symbol,'coin'),cell(x.tf),cell(x.rsi.toFixed(1)),cell('GREEN → RED','red'),cell(new Date(x.alarmAt).toLocaleTimeString()));a.append(tr)});
+ $('qualifiedCount').textContent=qs.length+' monitoring';$('alarmCount').textContent=state.alarms.length+' alarms';
+}
+function start(){if(state.running)return;state.running=true;$('start').disabled=true;$('stop').disabled=false;setStatus('Starting…');scan();state.timer=setInterval(scan,30000);state.monitorTimer=setInterval(monitor,12000);log('Monitoring started. RSI universe refresh: 30s; qualified 1M MACD checks: 12s.')}
+function stop(){state.running=false;clearInterval(state.timer);clearInterval(state.monitorTimer);$('start').disabled=false;$('stop').disabled=true;setStatus('Stopped',false);log('Monitoring stopped. Existing qualified coins and alarms are retained.')}
+function save(){localStorage.setItem('rsiMacdReversalSettings',JSON.stringify(settings()));log('Settings saved on this device.')}
+function load(){try{const s=JSON.parse(localStorage.getItem('rsiMacdReversalSettings')||'null');if(s){$('rsiPeriod').value=s.period;$('rsi3').value=s.r3;$('rsi5').value=s.r5;$('rsi15').value=s.r15;$('maxCoins').value=String(s.max);$('minVolume').value=s.volume}}catch(e){}}
+$('start').addEventListener('click',start);$('stop').addEventListener('click',stop);$('once').addEventListener('click',scan);$('save').addEventListener('click',save);$('clear').addEventListener('click',()=>{state.alarms=[];render();log('Alarm history cleared.')});load();render();
+})();
+</script>
+</body></html>
