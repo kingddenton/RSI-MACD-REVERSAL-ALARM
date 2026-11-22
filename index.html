@@ -55,6 +55,39 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
  <div class="status" id="diagStatus">Waiting for the first universe load.</div>
 </details>
 
+<details class="panel monitor-panel" id="performancePanel" open>
+ <summary style="cursor:pointer;font-size:15px;font-weight:750;list-style:none">PERFORMANCE MONITOR</summary>
+ <p class="note">Infrastructure measurements. Coin-job, candle-cache and signal timings activate when the coin-scanning engine is added.</p>
+ <div class="perf-grid">
+  <div class="perf-metric"><span>Universe load duration</span><strong id="perfDuration">—</strong></div>
+  <div class="perf-metric"><span>Average universe load</span><strong id="perfAverage">—</strong></div>
+  <div class="perf-metric"><span>REST requests this cycle</span><strong id="perfRequests">—</strong></div>
+  <div class="perf-metric"><span>Peak concurrent REST</span><strong id="perfPeakRequests">—</strong></div>
+  <div class="perf-metric"><span>Configured workers</span><strong id="perfWorkerLimit">8</strong></div>
+  <div class="perf-metric"><span>Active coin workers</span><strong id="perfActiveWorkers">Not active yet</strong></div>
+  <div class="perf-metric"><span>Queued / started jobs</span><strong id="perfJobs">Not active yet</strong></div>
+  <div class="perf-metric"><span>Completed / failed jobs</span><strong id="perfJobResults">Not active yet</strong></div>
+  <div class="perf-metric"><span>Candle cache hits / misses</span><strong id="perfCache">Not active yet</strong></div>
+  <div class="perf-metric"><span>Rate-limit cooldown</span><strong id="perfCooldown">Clear</strong></div>
+  <div class="perf-metric"><span>REST request errors</span><strong id="perfErrors">0</strong></div>
+  <div class="perf-metric"><span>Universe refresh cycles</span><strong id="perfCycles">0</strong></div>
+ </div>
+ <div class="status" id="perfStatus">Waiting for first universe load.</div>
+ <div class="wrap" style="margin-top:10px"><table><thead><tr><th>Cycle</th><th>Duration</th><th>Eligible</th><th>Selected</th><th>REST calls</th><th>Peak REST</th><th>Result</th></tr></thead><tbody id="perfHistory"><tr><td colspan="7" class="muted">No completed cycles yet.</td></tr></tbody></table></div>
+</details>
+<details class="panel monitor-panel" id="universeAudit" open>
+ <summary style="cursor:pointer;font-size:15px;font-weight:750;list-style:none">FULL UNIVERSE AUDIT · SELECTED AND MISSED COINS</summary>
+ <p class="note">Every USDT perpetual passing the minimum 24H quote-volume filter is listed, including coins not selected into Top X / Bottom Y.</p>
+ <div class="stats" style="margin:10px 0"><span>Selection mode: <b id="auditMode">Top X / Bottom Y</b></span><span>Eligible after volume: <b id="auditEligible">—</b></span><span>Selected: <b id="auditSelected">—</b></span><span>Eligible but not selected: <b id="auditMissed">—</b></span></div>
+ <div class="wrap"><table><thead><tr><th>24H RANK</th><th>SYMBOL</th><th>24H CHANGE</th><th>24H QUOTE VOLUME (USDT)</th><th>SELECTION</th><th>REASON</th></tr></thead><tbody id="auditRows"><tr><td colspan="6" class="muted">Waiting for first universe load.</td></tr></tbody></table></div>
+</details>
+<details class="panel monitor-panel" id="signalDiagnostics">
+ <summary style="cursor:pointer;font-size:15px;font-weight:750;list-style:none">SIGNAL / QUALIFICATION DIAGNOSTICS</summary>
+ <p class="note">Reserved for this scanner's RSI qualification and 1M MACD green-to-red transition diagnostics. No signal logic is included in this shell.</p>
+ <div class="stats"><span>Qualified coins: <b>Not active yet</b></span><span>Rejected coins: <b>Not active yet</b></span><span>Alarm transitions: <b>Not active yet</b></span></div>
+ <div class="wrap" style="margin-top:10px"><table><thead><tr><th>Symbol</th><th>Stage</th><th>Timeframe</th><th>Observed value</th><th>Decision / reason</th></tr></thead><tbody><tr><td colspan="5" class="muted">Signal diagnostics will populate when the RSI / MACD engine is added.</td></tr></tbody></table></div>
+</details>
+
 <section class="panel">
  <details id="universeDetails" open>
   <summary style="cursor:pointer;font-weight:800;display:flex;justify-content:space-between;gap:12px;align-items:center"><span>Selected Universe · <span id="universeCount">0</span> coins</span><span class="note">Tap to collapse / expand</span></summary>
@@ -69,7 +102,9 @@ const API='https://fapi.binance.com',STORE='reversal-alarm-shell-v1', $=id=>docu
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let running=false,stopRequested=false,scanBusy=false,loopTimer=null,rateLimitUntil=0;
 let requestConcurrency=8,activeRequests=0,requestWaiters=[],exchangeInfoCache=null,cycle=0;
-const diagnostics={requests:0,peakRequests:0};
+const diagnostics={requests:0,peakRequests:0,errors:0};
+const performanceHistory=[];
+let averageUniverseSeconds=0;
 const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
 function setStatus(message,error=false){$('status').textContent=message;$('status').className='status'+(error?' negative':'')}
 function setRunning(active){$('start').classList.toggle('running',active);$('start').textContent=active?'Scanning…':'Start scanning'}
@@ -91,7 +126,7 @@ async function getJson(url){
    throw new Error('Binance HTTP '+response.status+(rateLimitUntil>Date.now()?' · cooldown '+Math.ceil((rateLimitUntil-Date.now())/1000)+'s':''));
   }
   return await response.json();
- }catch(error){if(controller.signal.aborted)throw new Error('Binance request timed out after 20 seconds');throw error}
+ }catch(error){diagnostics.errors++;if(controller.signal.aborted)throw new Error('Binance request timed out after 20 seconds');throw error}
  finally{clearTimeout(timeout);releaseRequestSlot()}
 }
 async function mapLimit(items,limit,fn){
@@ -106,7 +141,7 @@ function renderUniverse(universe){
 }
 async function loadUniverse(){
  if(scanBusy)return;scanBusy=true;stopRequested=false;setRunning(running);cycle++;
- const started=Date.now();diagnostics.requests=0;diagnostics.peakRequests=0;
+ const started=Date.now();diagnostics.requests=0;diagnostics.peakRequests=0;diagnostics.errors=0;
  try{
   requestConcurrency=Math.max(1,Math.min(20,Math.floor(Number($('workers').value)||8)));
   setStatus('Loading Binance exchange information and 24H market tickers…');
@@ -128,6 +163,8 @@ async function loadUniverse(){
   const beforeBottom=selectedMap.size;bottom.forEach(item=>{if(!selectedMap.has(item.symbol))selectedMap.set(item.symbol,item)});
   const overlap=top.length+bottom.length-selectedMap.size;
   const universe=[...selectedMap.values()].sort((a,b)=>a.change-b.change);
+  const topSet=new Set(top.map(x=>x.symbol)),bottomSet=new Set(bottom.map(x=>x.symbol));
+  const audit=ranked.map((item,index)=>{const isTop=topSet.has(item.symbol),isBottom=bottomSet.has(item.symbol);return {...item,rank:index+1,selected:isTop||isBottom,reason:isTop&&isBottom?'Included in both selections':isTop?'Within Top X gainers':isBottom?'Within Bottom Y losers':'Outside Top X and Bottom Y'}});
   $('eligible').textContent=eligible.length;$('selected').textContent=universe.length;$('eligibleCount').textContent=eligible.length;
   $('universeRule').textContent='Top '+top.length+' / Bottom '+bottom.length+' · 24H price change';
   $('volumeRule').textContent=fmt(minVolume)+' USDT';renderUniverse(universe);
@@ -135,10 +172,25 @@ async function loadUniverse(){
   $('last').textContent=new Date().toLocaleTimeString();
   $('dContracts').textContent=fmt(info.symbols.length);$('dPerpetuals').textContent=fmt(perpetuals.length);
   $('dVolume').textContent=fmt(eligible.length);$('dGainers').textContent=fmt(top.length);$('dLosers').textContent=fmt(bottom.length);
+  
   $('dOverlap').textContent=fmt(overlap);$('dRequests').textContent=String(diagnostics.requests);$('dDuration').textContent=duration.toFixed(2)+'s';
+  const missed=eligible.length-universe.length;
+  $('auditMode').textContent='Top '+readCount('topCount')+' / Bottom '+readCount('bottomCount');
+  $('auditEligible').textContent=fmt(eligible.length);$('auditSelected').textContent=fmt(universe.length);$('auditMissed').textContent=fmt(missed);
+  $('auditRows').innerHTML=audit.length?audit.map(x=>'<tr><td>'+x.rank+'</td><td><b>'+x.symbol+'</b></td><td class="'+(x.change>=0?'positive':'negative')+'">'+(x.change>=0?'+':'')+fmt(x.change)+'%</td><td>'+fmt(x.volume)+'</td><td class="'+(x.selected?'positive':'muted')+'">'+(x.selected?'SELECTED':'NOT SELECTED')+'</td><td>'+x.reason+'</td></tr>').join(''):'<tr><td colspan="6" class="muted">No eligible contracts.</td></tr>';
+  averageUniverseSeconds=performanceHistory.length?(performanceHistory.reduce((sum,x)=>sum+x.duration,0)+duration)/(performanceHistory.length+1):duration;
+  performanceHistory.push({cycle,duration,eligible:eligible.length,selected:universe.length,requests:diagnostics.requests,peak:diagnostics.peakRequests,result:'Success'});
+  if(performanceHistory.length>20)performanceHistory.shift();
+  $('perfDuration').textContent=duration.toFixed(2)+'s';$('perfAverage').textContent=averageUniverseSeconds.toFixed(2)+'s';
+  $('perfRequests').textContent=String(diagnostics.requests);$('perfPeakRequests').textContent=String(diagnostics.peakRequests);
+  $('perfWorkerLimit').textContent=String(requestConcurrency);$('perfErrors').textContent=String(diagnostics.errors);
+  $('perfCycles').textContent=String(cycle);$('perfCooldown').textContent=rateLimitUntil>Date.now()?Math.ceil((rateLimitUntil-Date.now())/1000)+'s remaining':'Clear';
+  $('perfStatus').textContent='Cycle '+cycle+' · '+eligible.length+' eligible · '+universe.length+' selected · '+missed+' eligible but not selected. Coin jobs and candle cache are not active in this shell.';
+  $('perfHistory').innerHTML=performanceHistory.slice().reverse().map(x=>'<tr><td>'+x.cycle+'</td><td>'+x.duration.toFixed(2)+'s</td><td>'+x.eligible+'</td><td>'+x.selected+'</td><td>'+x.requests+'</td><td>'+x.peak+'</td><td class="positive">'+x.result+'</td></tr>').join('')||'<tr><td colspan="7">No completed cycles yet.</td></tr>';
+
   $('diagStatus').textContent='Universe cycle '+cycle+' completed · '+universe.length+' selected from '+eligible.length+' eligible contracts · peak concurrent REST requests: '+diagnostics.peakRequests+'.';
   setStatus('Universe loaded: '+universe.length+' selected coins from '+eligible.length+' eligible USDT perpetuals.');
- }catch(error){setStatus(error.message||'Universe load failed.',true);$('diagStatus').textContent='Universe load failed: '+(error.message||'Unknown error')}
+ }catch(error){setStatus(error.message||'Universe load failed.',true);$('diagStatus').textContent='Universe load failed: '+(error.message||'Unknown error');$('perfErrors').textContent=String(diagnostics.errors);$('perfCooldown').textContent=rateLimitUntil>Date.now()?Math.ceil((rateLimitUntil-Date.now())/1000)+'s remaining':'Clear';$('perfStatus').textContent='Cycle '+cycle+' failed: '+(error.message||'Unknown error')}
  finally{
   scanBusy=false;
   if(running&&!stopRequested){
@@ -153,6 +205,7 @@ $('start').addEventListener('click',()=>{if(running)return;running=true;stopRequ
 $('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}stopRequested=false;loadUniverse()});
 $('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
 $('save').addEventListener('click',saveSettings);
+$('workers').addEventListener('change',()=>{$('perfWorkerLimit').textContent=String(Math.max(1,Math.min(20,Math.floor(Number($('workers').value)||8))))});
 $('refresh').addEventListener('change',()=>{if(running&&!scanBusy){clearTimeout(loopTimer);if($('refresh').value==='0'){running=false;setRunning(false)}else loopTimer=setTimeout(loadUniverse,$('refresh').value==='continuous'?0:Number($('refresh').value)*1000)}});
 loadSettings();
 })();
