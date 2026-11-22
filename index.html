@@ -450,7 +450,7 @@ function handleRsiSocketMessage(event){
  if(ST_INTERVALS.includes(interval)||EMA_ALERT_INTERVALS.includes(interval)){
   if(!macdHistory){renderRsiDiagnostics();return}
   const closeTime=Number(k.T);if(closeTime<=macdHistory.lastClosedTime){renderRsiDiagnostics();return}
-  macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();macdHistory.lastClosedTime=closeTime;
+  macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift()}macdHistory.lastClosedTime=closeTime;
   if(ST_INTERVALS.includes(interval)){
    const st=calculateSupertrendDirection(macdHistory.rows||[]);
    const prior=stAlertState.get(key);
