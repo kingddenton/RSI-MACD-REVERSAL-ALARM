@@ -71,7 +71,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 
 <details class="panel monitor-panel" id="performancePanel" open>
  <summary style="cursor:pointer;font-size:15px;font-weight:750;list-style:none">PERFORMANCE MONITOR</summary>
- <p class="note">Infrastructure measurements. RSI candle requests are now included in each universe cycle.</p>
+ <p class="note">Infrastructure measurements. RSI uses WebSockets for live closed-candle updates; REST history is fetched only for newly selected coins.</p>
  <div class="perf-grid">
   <div class="perf-metric"><span>Universe load duration</span><strong id="perfDuration">—</strong></div>
   <div class="perf-metric"><span>Average universe load</span><strong id="perfAverage">—</strong></div>
@@ -184,41 +184,72 @@ function calculateRsiSeries(closes,period=RSI_PERIOD){
  }
  return out;
 }
-async function scanRsiContractions(universe){
+const rsiCandleHistory=new Map();
+let rsiSocket=null,rsiSocketConnected=false,rsiSocketWanted=new Set(),rsiReconnectTimer=null,rsiWsMessageId=1;
+function rsiStreamName(symbol,interval){return symbol.toLowerCase()+'@kline_'+interval}
+function rsiHistoryKey(symbol,interval){return symbol+'|'+interval}
+function evaluateClosedRsi(symbol,interval,closedTime){
+ const key=rsiHistoryKey(symbol,interval),history=rsiCandleHistory.get(key);
  const required=Math.max(1,Math.min(20,Math.floor(Number($('rsiContractions').value)||3)));
- const jobs=universe.flatMap(coin=>RSI_INTERVALS.map(interval=>({coin,interval})));
- rsiScanStats={checked:0,qualified:0,errors:0};
- const result=await mapLimit(jobs,requestConcurrency,async job=>{
-  const data=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(job.coin.symbol)+'&interval='+job.interval+'&limit='+(RSI_PERIOD+required+12));
-  const now=Date.now();
-  const closed=data.filter(k=>Number(k[6])<now);
-  const closes=closed.map(k=>Number(k[4]));
-  const values=calculateRsiSeries(closes);
-  if(values.length<required+1)return {qualified:false};
-  const latestClosed=Number(closed[closed.length-1][6]);
-  const key=job.coin.symbol+'|'+job.interval;
-  const signature=String(latestClosed);
-  if(rsiLastEvaluated.get(key)===signature)return {qualified:false,alreadyEvaluated:true};
-  rsiLastEvaluated.set(key,signature);
-  const recent=values.slice(-(required+1));
-  const qualified=recent.slice(1).every((v,i)=>v<recent[i]);
-  if(qualified){
-   qualifyCoin(job.coin.symbol,{reason:'RSI contracting',timeframe:job.interval,rsiPeriod:RSI_PERIOD,consecutiveContractions:required,rsiValues:recent,closedCandleTime:new Date(latestClosed).toISOString()});
-   return {qualified:true,symbol:job.coin.symbol,interval:job.interval,values:recent};
-  }
-  return {qualified:false};
- });
- for(const item of result.output){if(item&&item.error)rsiScanStats.errors++;else if(item&&item.qualified){rsiScanStats.qualified++;}}
- rsiScanStats.checked=result.done;
- $('signalDiagnostics').querySelector('.note').textContent='Live RSI(14) qualification is active on closed 3m, 5m and 15m candles. A coin qualifies when any one timeframe has the required consecutive RSI declines.';
- const signalStats=$('signalDiagnostics').querySelector('.stats');
- if(signalStats)signalStats.innerHTML='<span>RSI checks: <b>'+rsiScanStats.checked+'</b></span><span>New qualifications: <b>'+rsiScanStats.qualified+'</b></span><span>Request errors: <b>'+rsiScanStats.errors+'</b></span><span>Rule: <b>'+required+' consecutive declines</b></span>';
+ if(!history||history.closes.length<RSI_PERIOD+required)return false;
+ const values=calculateRsiSeries(history.closes);if(values.length<required+1)return false;
+ if(rsiLastEvaluated.get(key)===String(closedTime))return false;
+ rsiLastEvaluated.set(key,String(closedTime));
+ const recent=values.slice(-(required+1)),qualified=recent.slice(1).every((v,i)=>v<recent[i]);
+ if(qualified)qualifyCoin(symbol,{reason:'RSI contracting',timeframe:interval,rsiPeriod:RSI_PERIOD,consecutiveContractions:required,rsiValues:recent,closedCandleTime:new Date(closedTime).toISOString(),source:'Binance Futures WebSocket'});
+ return qualified;
 }
+function handleRsiSocketMessage(event){
+ let msg;try{msg=JSON.parse(event.data)}catch(e){return}
+ const k=msg&&msg.k;if(!k||!k.x)return;
+ const symbol=String(k.s||'').toUpperCase(),interval=k.i,key=rsiHistoryKey(symbol,interval),history=rsiCandleHistory.get(key);
+ if(!history)return;
+ const closeTime=Number(k.T);if(closeTime<=history.lastClosedTime)return;
+ history.closes.push(Number(k.c));if(history.closes.length>120)history.closes.shift();
+ history.lastClosedTime=closeTime;rsiScanStats.checked++;
+ evaluateClosedRsi(symbol,interval,closeTime);
+ const stats=$('signalDiagnostics').querySelector('.stats');
+ if(stats)stats.innerHTML='<span>Closed WebSocket candles: <b>'+rsiScanStats.checked+'</b></span><span>REST bootstrap errors: <b>'+rsiScanStats.errors+'</b></span><span>Rule: <b>'+Math.max(1,Number($('rsiContractions').value)||3)+' consecutive declines</b></span>';
+}
+function sendRsiSubscription(method,streams){if(rsiSocketConnected&&streams.length)rsiSocket.send(JSON.stringify({method,params:streams,id:rsiWsMessageId++}))}
+function connectRsiSocket(){
+ if(rsiSocket&&[WebSocket.CONNECTING,WebSocket.OPEN].includes(rsiSocket.readyState))return;
+ clearTimeout(rsiReconnectTimer);rsiSocket=new WebSocket('wss://fstream.binance.com/ws');
+ rsiSocket.onopen=()=>{rsiSocketConnected=true;const streams=[...rsiSocketWanted];for(let i=0;i<streams.length;i+=100)sendRsiSubscription('SUBSCRIBE',streams.slice(i,i+100));setStatus('RSI WebSocket connected · monitoring '+rsiSocketWanted.size+' candle streams.')};
+ rsiSocket.onmessage=handleRsiSocketMessage;
+ rsiSocket.onerror=()=>{$('perfStatus').textContent='RSI WebSocket connection error; reconnecting…'};
+ rsiSocket.onclose=()=>{rsiSocketConnected=false;rsiSocket=null;if(rsiSocketWanted.size&&!stopRequested)rsiReconnectTimer=setTimeout(connectRsiSocket,5000)};
+}
+async function syncRsiWebSockets(universe){
+ const symbols=new Set(universe.map(x=>x.symbol)),wanted=new Set([...symbols].flatMap(s=>RSI_INTERVALS.map(i=>rsiStreamName(s,i))));
+ const removed=[...rsiSocketWanted].filter(x=>!wanted.has(x)),added=[...wanted].filter(x=>!rsiSocketWanted.has(x));
+ rsiSocketWanted=wanted;
+ if(rsiSocketConnected){for(let i=0;i<removed.length;i+=100)sendRsiSubscription('UNSUBSCRIBE',removed.slice(i,i+100));for(let i=0;i<added.length;i+=100)sendRsiSubscription('SUBSCRIBE',added.slice(i,i+100))}
+ else if(wanted.size)connectRsiSocket();
+ const jobs=universe.flatMap(coin=>RSI_INTERVALS.filter(interval=>!rsiCandleHistory.has(rsiHistoryKey(coin.symbol,interval))).map(interval=>({coin,interval})));
+ const required=Math.max(1,Math.min(20,Math.floor(Number($('rsiContractions').value)||3)));
+ const seeded=await mapLimit(jobs,requestConcurrency,async job=>{
+  const data=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(job.coin.symbol)+'&interval='+job.interval+'&limit='+(RSI_PERIOD+required+12));
+  const closed=data.filter(row=>Number(row[6])<Date.now());if(!closed.length)return {qualified:false};
+  const closes=closed.map(row=>Number(row[4])),lastClosedTime=Number(closed[closed.length-1][6]);
+  rsiCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes,lastClosedTime});
+  return {qualified:evaluateClosedRsi(job.coin.symbol,job.interval,lastClosedTime)};
+ });
+ rsiScanStats.errors+=seeded.output.filter(x=>x&&x.error).length;
+ const stats=$('signalDiagnostics').querySelector('.stats');
+ if(stats)stats.innerHTML='<span>Closed WebSocket candles: <b>'+rsiScanStats.checked+'</b></span><span>New timeframe histories: <b>'+seeded.done+'</b></span><span>Bootstrap errors: <b>'+rsiScanStats.errors+'</b></span><span>Rule: <b>'+required+' consecutive declines</b></span>';
+ $('signalDiagnostics').querySelector('.note').textContent='Live RSI(14) qualification uses Binance Futures WebSockets for completed 3m, 5m and 15m candles. REST is used only to seed history for newly selected coins.';
+ $('perfCache').textContent='WebSocket live';$('perfJobs').textContent=String(seeded.done);$('perfJobResults').textContent='0 / '+rsiScanStats.errors;
+ setStatus('RSI WebSocket monitoring active · '+symbols.size+' coins · '+wanted.size+' streams · seeded '+seeded.done+' new histories.');
+}
+function stopRsiWebSockets(){clearTimeout(rsiReconnectTimer);rsiSocketWanted.clear();if(rsiSocket){try{rsiSocket.close()}catch(e){}}rsiSocket=null;rsiSocketConnected=false}
+window.addEventListener('beforeunload',stopRsiWebSockets);
+
 const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
 function setStatus(message,error=false){$('status').textContent=message;$('status').className='status'+(error?' negative':'')}
 function setRunning(active){$('start').classList.toggle('running',active);$('start').textContent=active?'Scanning…':'Start scanning'}
 function settings(){return {topCount:$('topCount').value,bottomCount:$('bottomCount').value,volume:$('volume').value,workers:$('workers').value,refresh:$('refresh').value}}
-function saveSettings(){try{localStorage.setItem(STORE,JSON.stringify(settings()));setStatus('Settings saved in this browser.')}catch(e){setStatus('Could not save settings in this browser.',true)}}
+function saveSettings(){try{const saved=settings();saved.rsiContractions=$('rsiContractions').value;localStorage.setItem(STORE,JSON.stringify(saved));setStatus('Settings saved in this browser.')}catch(e){setStatus('Could not save settings in this browser.',true)}}
 function loadSettings(){try{const s=JSON.parse(localStorage.getItem(STORE)||'{}');for(const [k,v] of Object.entries(s))if($(k))$(k).value=v}catch(e){}}
 async function acquireRequestSlot(){
  while(Date.now()<rateLimitUntil)await sleep(Math.min(1000,rateLimitUntil-Date.now()));
@@ -277,7 +308,7 @@ async function loadUniverse(){
   $('volumeRule').textContent=fmt(minVolume)+' USDT';renderUniverse(universe);
   $('last').textContent=new Date().toLocaleTimeString();
   setStatus('Universe loaded: '+universe.length+' coins. Checking closed-candle RSI on 3m, 5m and 15m…');
-  await scanRsiContractions([...selectedMap.values()]);
+  await syncRsiWebSockets([...selectedMap.values()]);
   if(stopRequested)return;
   const topSet=new Set(top.map(x=>x.symbol)),bottomSet=new Set(bottom.map(x=>x.symbol));
   const audit=ranked.map((item,index)=>{const isTop=topSet.has(item.symbol),isBottom=bottomSet.has(item.symbol);return {...item,rank:index+1,selected:isTop||isBottom,reason:isTop&&isBottom?'Included in both selections':isTop?'Within Top X gainers':isBottom?'Within Bottom Y losers':'Outside Top X and Bottom Y'}});
@@ -319,7 +350,7 @@ async function loadUniverse(){
 }
 $('start').addEventListener('click',()=>{if(running)return;running=true;stopRequested=false;clearTimeout(loopTimer);setRunning(true);loadUniverse()});
 $('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}stopRequested=false;loadUniverse()});
-$('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
+$('stop').addEventListener('click',()=>{running=false;stopRequested=true;stopRsiWebSockets();clearTimeout(loopTimer);setRunning(false);setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
 $('save').addEventListener('click',saveSettings);
 $('workers').addEventListener('change',()=>{$('perfWorkerLimit').textContent=String(Math.max(1,Math.min(20,Math.floor(Number($('workers').value)||8))))});
 $('refresh').addEventListener('change',()=>{if(running&&!scanBusy){clearTimeout(loopTimer);if($('refresh').value==='0'){running=false;setRunning(false)}else loopTimer=setTimeout(loadUniverse,$('refresh').value==='continuous'?0:Number($('refresh').value)*1000)}});
