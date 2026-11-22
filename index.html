@@ -96,7 +96,8 @@ const diag={totalPairs:0,volumeEligible:0,gainers:0,losers:0,selected:0,queued:0
 let nextRequestAt=0,cooldownUntil=0,requestGate=Promise.resolve(),activeRequests=0,peakActiveRequests=0,requestConcurrency=8;
 const requestWaiters=[];
 const candleCache=new Map();
-const state={running:false,scanBusy:false,universe:[],qualified:new Map(),alarms:[],timer:null,ws:null,wsReconnectTimer:null,wsBackoff:1000,wsRequestId:0,wsSubs:new Set(),exchangeReady:false};
+const state={running:false,scanBusy:false,universe:[],qualified:new Map(),alarms:[],timer:null,ws:null,wsReconnectTimer:null,wsBackoff:1000,wsRequestId:0,wsSubs:new Set(),candleSockets:[],candleReconnects:new Map(),exchangeReady:false};
+const candleWsFresh=new Map();
 const settings=()=>({period:clamp(+$('rsiPeriod').value,2,50,14),r3:clamp(+$('rsi3').value,1,99,70),r5:clamp(+$('rsi5').value,1,99,70),r15:clamp(+$('rsi15').value,1,99,70),topX:clamp(+$('topX').value,0,500,10),bottomY:clamp(+$('bottomY').value,0,500,10),volume:Math.max(0,+$('minVolume').value||0),workers:clamp(+$('workers').value,1,20,8),refresh:$('refreshRate').value});
 function clamp(v,min,max,def){return Number.isFinite(v)?Math.min(max,Math.max(min,v)):def}
 function log(msg){const d=document.createElement('div');d.textContent=new Date().toLocaleTimeString()+' · '+msg;$('log').prepend(d);while($('log').children.length>40)$('log').lastChild.remove()}
@@ -107,7 +108,32 @@ async function acquireRequestSlot(){while(true){while(Date.now()<cooldownUntil)a
 function releaseRequestSlot(){if(requestWaiters.length){requestWaiters.shift()();return}activeRequests=Math.max(0,activeRequests-1)}
 async function getJSON(path){let attempt=0;while(true){await acquireRequestSlot();await waitForRequestSlot();const started=performance.now();perf.requests++;const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),20000);try{const r=await fetch(API+path,{cache:'no-store',signal:controller.signal});perf.responseMs+=performance.now()-started;if(r.status===418||r.status===429){perf.failed++;perf.rateLimits++;const retry=Number(r.headers.get('Retry-After'))*1000||Math.min(60000,2000*Math.pow(2,attempt));cooldownUntil=Math.max(cooldownUntil,Date.now()+retry);renderDiagnostics();if(attempt++<3){log('Binance rate limit '+r.status+'; cooling down '+Math.ceil(retry/1000)+'s before retry.');continue}throw new Error('Binance HTTP '+r.status+' after retries')}if(!r.ok){perf.failed++;throw new Error('Binance HTTP '+r.status)}const data=await r.json();perf.success++;perf.lastSuccess=Date.now();return data}catch(e){if(!String(e.message).includes('Binance HTTP')){perf.failed++;if(controller.signal.aborted)e=new Error('Binance request timed out after 20 seconds');if(attempt<3&&/Failed to fetch|NetworkError|timed out/i.test(e.message)){await sleep(1000*Math.pow(2,attempt++));continue}}throw e}finally{clearTimeout(timeout);releaseRequestSlot();renderPerformance()}}}
 function intervalMs(tf){return ({'1m':60000,'3m':180000,'5m':300000,'15m':900000})[tf]||60000}
-async function cachedKlines(symbol,interval,limit=100){const key=symbol+'|'+interval,rows=candleCache.get(key),ms=intervalMs(interval),expected=Math.floor(Date.now()/ms)*ms-ms,last=rows&&closed(rows).slice(-1)[0];if(rows&&closed(rows).length>=40&&last&&Number(last[0])===expected){perf.cacheHits++;return rows}perf.cacheMisses++;const fresh=await getJSON('/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+interval+'&limit='+limit);if(Array.isArray(fresh)&&fresh.length)candleCache.set(key,fresh.slice(-limit));return fresh}
+function cacheKlineEvent(k){
+ if(!k||!k.s||!k.i)return;
+ const key=k.s+'|'+k.i,row=[Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T),Number(k.q),Number(k.n),Number(k.V),Number(k.Q),Number(k.B||0)];
+ if(!row.every(Number.isFinite))return;
+ const rows=candleCache.get(key)||[],index=rows.findIndex(x=>Number(x[0])===row[0]);
+ if(index>=0)rows[index]=row;else rows.push(row);
+ rows.sort((a,b)=>Number(a[0])-Number(b[0]));if(rows.length>100)rows.splice(0,rows.length-100);
+ candleCache.set(key,rows);candleWsFresh.set(key,Date.now());
+}
+async function cachedKlines(symbol,interval,limit=100){
+ const key=symbol+'|'+interval,cached=candleCache.get(key),freshAt=candleWsFresh.get(key),freshWindow=intervalMs(interval)*2;
+ if(cached&&cached.length>=40&&freshAt&&Date.now()-freshAt<freshWindow){perf.cacheHits++;return cached}
+ if(!cached||cached.length<40){
+  perf.cacheMisses++;
+  const rows=await getJSON('/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+interval+'&limit='+limit);
+  if(!Array.isArray(rows)||!rows.length)throw new Error('Binance returned no candle history for '+symbol+' '+interval);
+  candleCache.set(key,rows.slice(-limit));return rows;
+ }
+ perf.cacheHits++;
+ const rows=await getJSON('/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+interval+'&startTime='+cached[cached.length-1][0]+'&limit='+limit);
+ if(!Array.isArray(rows)||!rows.length)return cached;
+ const merged=new Map(cached.map(row=>[Number(row[0]),row]));for(const row of rows)merged.set(Number(row[0]),row);
+ const updated=[...merged.values()].sort((a,b)=>Number(a[0])-Number(b[0])).slice(-limit);
+ if(updated.length<40){const full=await getJSON('/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+interval+'&limit='+limit);candleCache.set(key,full.slice(-limit));return full}
+ candleCache.set(key,updated);return updated;
+}
 function cacheClosedKline(symbol,interval,row){const key=symbol+'|'+interval,rows=candleCache.get(key)||[],i=rows.findIndex(x=>Number(x[0])===Number(row[0]));if(i>=0)rows[i]=row;else rows.push(row);rows.sort((a,b)=>Number(a[0])-Number(b[0]));if(rows.length>100)rows.splice(0,rows.length-100);candleCache.set(key,rows)}
 
 async function getUniverse(){
@@ -126,6 +152,30 @@ async function getUniverse(){
  diag.totalPairs=state.allowed.size;diag.volumeEligible=eligible.length;diag.gainers=gainers.length;diag.losers=losers.length;diag.selected=state.universe.length;diag.queued=state.universe.length;diag.started=0;diag.completed=0;diag.failed=0;diag.rejected=0;diag.rejections=[];diag.signalRows=[];diag.reasons={alreadyTracked:0,rsiBelow:0,insufficientRsi:0,insufficientMacd:0,errors:0};diag.lastUniverse=Date.now();
  perf.universeMs=performance.now()-started;
  $('universeCount').textContent='Universe: '+state.universe.length;renderDiagnostics();
+}
+function syncCandleStreams(){
+ const symbols=state.universe.map(x=>x.symbol.toLowerCase()),chunks=[];
+ for(let i=0;i<symbols.length;i+=30)chunks.push(symbols.slice(i,i+30));
+ const wanted=new Set(chunks.map((chunk,i)=>i));
+ for(const [index,ws] of state.candleSockets.entries())if(!wanted.has(index)){try{ws.close()}catch(e){}}
+ state.candleSockets=state.candleSockets.slice(0,chunks.length);
+ chunks.forEach((chunk,index)=>{
+  const existing=state.candleSockets[index];
+  if(existing&&[WebSocket.OPEN,WebSocket.CONNECTING].includes(existing.readyState))return;
+  const streams=chunk.flatMap(symbol=>['3m','5m','15m'].map(tf=>symbol+'@kline_'+tf)).join('/');
+  try{
+   const ws=new WebSocket('wss://fstream.binance.com/stream?streams='+streams);
+   state.candleSockets[index]=ws;
+   ws.onopen=()=>{log('Candle cache stream '+(index+1)+' connected ('+chunk.length+' symbols).');setTransport('Candle WebSocket cache + 1M alarm stream')};
+   ws.onmessage=event=>{try{const packet=JSON.parse(event.data),k=packet.data&&packet.data.k;if(k)cacheKlineEvent(k)}catch(e){}};
+   ws.onerror=()=>log('Candle cache stream '+(index+1)+' reported a connection error.');
+   ws.onclose=()=>{if(!state.running)return;const prior=state.candleReconnects.get(index)||1000,wait=prior;state.candleReconnects.set(index,Math.min(30000,prior*2));setTimeout(()=>{if(state.running)syncCandleStreams()},wait)};
+  }catch(e){log('Candle cache stream setup failed: '+e.message)}
+ });
+}
+function closeCandleStreams(){
+ state.candleSockets.forEach(ws=>{if(ws){ws.onclose=null;try{ws.close()}catch(e){}}});
+ state.candleSockets=[];state.candleReconnects.clear();
 }
 async function mapLimit(items,limit,fn,onError){let i=0;const workers=Array.from({length:Math.min(limit,items.length)},async()=>{perf.activeWorkers++;perf.peakWorkers=Math.max(perf.peakWorkers,perf.activeWorkers);renderPerformance();try{while(i<items.length){const n=i++,item=items[n],itemStart=performance.now();diag.started++;renderDiagnostics();try{await fn(item);diag.completed++}catch(e){diag.failed++;recordRejection(item.symbol||'Unknown','Scan error: '+e.message,'');recordSignal(item.symbol||'Unknown',{outcome:'Scan error',detail:e.message});if(onError)onError(e,item);else log((item.symbol||'Task')+': '+e.message)}finally{if(item&&item.symbol)perf.coinTimes.set(item.symbol,performance.now()-itemStart)}renderDiagnostics()}}finally{perf.activeWorkers--;renderPerformance()}});await Promise.all(workers)}
 async function klines(symbol,interval,limit=100){return cachedKlines(symbol,interval,limit)}
@@ -157,7 +207,7 @@ async function scan(){
  if(state.scanBusy)return;state.scanBusy=true;setStatus('Scanning…');
  const started=performance.now(),failedBefore=perf.failed;
  perf.peakWorkers=0;perf.peakRequests=0;perf.cacheHits=0;perf.cacheMisses=0;perf.coinTimes.clear();perf.universeMs=0;requestConcurrency=settings().workers;peakActiveRequests=0;
- try{await getUniverse();const batch=[...state.universe];await mapLimit(batch,settings().workers,async t=>{await qualifySymbol(t)},()=>{});$('lastScan').textContent='Last scan '+new Date().toLocaleTimeString()}
+ try{await getUniverse();syncCandleStreams();const batch=[...state.universe];await mapLimit(batch,settings().workers,async t=>{await qualifySymbol(t)},()=>{});$('lastScan').textContent='Last scan '+new Date().toLocaleTimeString()}
  catch(e){log('Scan error: '+e.message);setStatus('Connection error',false)}
  finally{
   const duration=performance.now()-started,scanned=diag.started,coinTimes=[...perf.coinTimes.entries()].map(([symbol,ms])=>({symbol,ms})).sort((a,b)=>a.ms-b.ms),avgPerCoin=coinTimes.length?coinTimes.reduce((sum,x)=>sum+x.ms,0)/coinTimes.length:0;
@@ -238,7 +288,7 @@ function render(){
 }
 async function runScanLoop(){while(state.running){await scan();if(!state.running)break;const mode=settings().refresh;if(mode==='off')break;if(mode==='continuous')continue;await sleep(Number(mode)*1000)}}
 function start(){if(state.running)return;state.running=true;$('start').disabled=true;$('stop').disabled=false;setStatus('Starting…');connectWebSocket();runScanLoop();log('Monitoring started. Universe refresh: '+settings().refresh+'. RSI workers: '+settings().workers+'. 1M MACD: Binance WebSocket.')}
-function stop(){state.running=false;clearTimeout(state.timer);closeWebSocket();$('start').disabled=false;$('stop').disabled=true;setStatus('Stopped',false);log('Monitoring stopped. Existing qualified coins and alarms are retained.')}
+function stop(){state.running=false;clearTimeout(state.timer);closeCandleStreams();closeWebSocket();$('start').disabled=false;$('stop').disabled=true;setStatus('Stopped',false);log('Monitoring stopped. Existing qualified coins and alarms are retained.')}
 function save(){localStorage.setItem('rsiMacdReversalSettings',JSON.stringify(settings()));log('Settings saved on this device.')}
 function load(){try{const s=JSON.parse(localStorage.getItem('rsiMacdReversalSettings')||'null');if(s){$('rsiPeriod').value=s.period??14;$('rsi3').value=s.r3??70;$('rsi5').value=s.r5??70;$('rsi15').value=s.r15??70;$('minVolume').value=s.volume??2000000;$('topX').value=s.topX??(s.universeValue??10);$('bottomY').value=s.bottomY??(s.universeValue??10);if(s.workers)$('workers').value=s.workers;if(s.refresh)$('refreshRate').value=s.refresh}}catch(e){}}
 $('workers').addEventListener('input',renderDiagnostics);$('topX').addEventListener('input',renderDiagnostics);$('bottomY').addEventListener('input',renderDiagnostics);$('minVolume').addEventListener('input',renderDiagnostics);$('start').addEventListener('click',start);$('stop').addEventListener('click',stop);$('once').addEventListener('click',scan);$('save').addEventListener('click',save);$('clear').addEventListener('click',()=>{state.alarms=[];render();log('Alarm history cleared.')});load();render();renderPerformance();renderDiagnostics();
