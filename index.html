@@ -32,7 +32,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
   <div class="field"><label for="topCount">TOP GAINERS · X</label><input id="topCount" type="number" min="0" step="1" value="10"></div>
   <div class="field"><label for="bottomCount">BOTTOM LOSERS · Y</label><input id="bottomCount" type="number" min="0" step="1" value="10"></div>
   <div class="field"><label for="volume">MIN 24H QUOTE VOLUME (USDT)</label><input id="volume" type="number" min="0" step="100000" value="2000000"></div>
-  <div class="field"><label for="rsiContractions">RSI CONTRACTING CANDLES</label><input id="rsiContractions" type="number" min="0" max="20" step="1" value="3"></div>
+  <div class="field"><label for="rsiThreshold">RSI THRESHOLD · ALL 3 TIMEFRAMES</label><input id="rsiThreshold" type="number" min="1" max="99" step="1" value="70"></div>
   <div class="field"><label for="workers">CONCURRENT WORKERS</label><input id="workers" type="number" min="1" max="20" value="8"></div>
   <div class="field"><label for="refresh">AUTO REFRESH</label><select id="refresh"><option value="0">Off</option><option value="10">Every 10 seconds</option><option value="30">Every 30 seconds</option><option value="60" selected>Every 60 seconds</option><option value="120">Every 2 minutes</option><option value="continuous">Continuous · immediately after scan</option></select></div>
  </div>
@@ -190,16 +190,31 @@ const rsiWsPending=new Map();
 let rsiWsAckStreams=0,rsiWsAckErrors=0,rsiWsMessages=0,rsiWsLastMessage='Never',rsiWsLastEvent='None',rsiCycleSeeded=0,rsiCycleErrors=0;
 function rsiStreamName(symbol,interval){return symbol.toLowerCase()+'@kline_'+interval}
 function rsiHistoryKey(symbol,interval){return symbol+'|'+interval}
+function evaluateAllTimeframeRsi(symbol){
+ const threshold=Math.max(1,Math.min(99,Number($('rsiThreshold').value)||70));
+ const readings={};
+ for(const interval of RSI_INTERVALS){
+  const history=rsiCandleHistory.get(rsiHistoryKey(symbol,interval));
+  if(!history||history.closes.length<=RSI_PERIOD)return false;
+  const values=calculateRsiSeries(history.closes);
+  if(!values.length)return false;
+  readings[interval]=Number(values[values.length-1].toFixed(2));
+ }
+ const signature=RSI_INTERVALS.map(interval=>rsiCandleHistory.get(rsiHistoryKey(symbol,interval)).lastClosedTime).join('|');
+ const key=String(symbol).toUpperCase()+'|ALL3';
+ if(RSI_INTERVALS.some(interval=>readings[interval]<threshold)){
+  rsiLastEvaluated.delete(key);
+  return false;
+ }
+ if(rsiLastEvaluated.get(key)===signature)return false;
+ rsiLastEvaluated.set(key,signature);
+ qualifyCoin(symbol,{reason:'RSI threshold reached on all three timeframes',timeframes:readings,threshold,rsiPeriod:RSI_PERIOD,source:'Binance Futures closed candles'});
+ return true;
+}
 function evaluateClosedRsi(symbol,interval,closedTime){
- const key=rsiHistoryKey(symbol,interval),history=rsiCandleHistory.get(key);
- const required=Math.max(0,Math.min(20,Number.isFinite(Number($('rsiContractions').value))?Math.floor(Number($('rsiContractions').value)):3));
- if(!history||history.closes.length<RSI_PERIOD+required)return false;
- const values=calculateRsiSeries(history.closes);if(values.length<required+1)return false;
- if(rsiLastEvaluated.get(key)===String(closedTime))return false;
- rsiLastEvaluated.set(key,String(closedTime));
- const recent=values.slice(-(required+1)),qualified=recent.slice(1).every((v,i)=>v<recent[i]);
- if(qualified)qualifyCoin(symbol,{reason:'RSI contracting',timeframe:interval,rsiPeriod:RSI_PERIOD,consecutiveContractions:required,rsiValues:recent,closedCandleTime:new Date(closedTime).toISOString(),source:'Binance Futures WebSocket'});
- return qualified;
+ const key=rsiHistoryKey(symbol,interval);
+ if(!rsiCandleHistory.has(key))return false;
+ return evaluateAllTimeframeRsi(symbol);
 }
 function renderRsiDiagnostics(){
  const stats=$('signalDiagnostics').querySelector('.stats');
@@ -213,7 +228,7 @@ function renderRsiDiagnostics(){
  '<span>Current-cycle seed errors: <b>'+rsiCycleErrors+'</b></span>'+
  '<span>Total bootstrap errors: <b>'+rsiScanStats.errors+'</b></span>'+
  '<span>Subscription errors: <b>'+rsiWsAckErrors+'</b></span>'+
- '<span>Rule: <b>'+Math.max(0,Number.isFinite(Number($('rsiContractions').value))?Number($('rsiContractions').value):3)+' consecutive declines</b></span>';
+ '<span>Rule: <b>'+Math.max(0,Number.isFinite(Number($('rsiContractions').value))?Number($('rsiContractions').value):3)+' RSI threshold across all 3 timeframes</b></span>';
 }
 function handleRsiSocketMessage(event){
  let msg;try{msg=JSON.parse(event.data)}catch(e){return}
@@ -256,7 +271,7 @@ async function syncRsiWebSockets(universe){
  if(rsiSocketConnected){for(let i=0;i<removed.length;i+=100)sendRsiSubscription('UNSUBSCRIBE',removed.slice(i,i+100));for(let i=0;i<added.length;i+=100)sendRsiSubscription('SUBSCRIBE',added.slice(i,i+100))}
  else if(wanted.size)connectRsiSocket();
  const jobs=universe.flatMap(coin=>RSI_INTERVALS.filter(interval=>!rsiCandleHistory.has(rsiHistoryKey(coin.symbol,interval))).map(interval=>({coin,interval})));
- const required=Math.max(1,Math.min(20,Math.floor(Number($('rsiContractions').value)||3)));
+ const required=3;
  const seeded=await mapLimit(jobs,requestConcurrency,async job=>{
   const data=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(job.coin.symbol)+'&interval='+job.interval+'&limit='+(RSI_PERIOD+required+12));
   const closed=data.filter(row=>Number(row[6])<Date.now());if(!closed.length)return {qualified:false};
@@ -269,7 +284,7 @@ async function syncRsiWebSockets(universe){
  rsiScanStats.errors+=failures.length;
  const sampleError=failures.length?String(failures[0].error):'None';
  renderRsiDiagnostics();
- $('signalDiagnostics').querySelector('.note').textContent=failures.length?'RSI history seeding had '+failures.length+' errors in this cycle. First error: '+sampleError:'Live RSI(14) qualification uses Binance Futures WebSockets for completed 3m, 5m and 15m candles. REST history is seeded only once per selected coin/timeframe.';
+ $('signalDiagnostics').querySelector('.note').textContent=failures.length?'RSI history seeding had '+failures.length+' errors in this cycle. First error: '+sampleError:'Live RSI(14) qualification requires RSI at or above the threshold on completed 3m, 5m and 15m candles. REST history is seeded only once per selected coin/timeframe.';
  $('perfCache').textContent=rsiSocketConnected?'WebSocket connected':'WebSocket connecting';$('perfJobs').textContent=String(rsiCandleHistory.size);$('perfJobResults').textContent=rsiCycleSeeded+' seeded / '+rsiCycleErrors+' errors';
  setStatus(failures.length?'RSI history seed failed: '+sampleError:'RSI WebSocket monitoring active · '+symbols.size+' coins · '+wanted.size+' streams · cached '+rsiCandleHistory.size+' histories.',!!failures.length);
 }
@@ -363,7 +378,7 @@ async function loadUniverse(){
   $('perfRequests').textContent=String(diagnostics.requests);$('perfPeakRequests').textContent=String(diagnostics.peakRequests);
   $('perfWorkerLimit').textContent=String(requestConcurrency);$('perfErrors').textContent=String(diagnostics.errors);
   $('perfCycles').textContent=String(cycle);$('perfCooldown').textContent=rateLimitUntil>Date.now()?Math.ceil((rateLimitUntil-Date.now())/1000)+'s remaining':'Clear';
-  $('perfStatus').textContent='Cycle '+cycle+' · '+eligible.length+' eligible · '+universe.length+' selected · '+missed+' eligible but not selected. RSI contraction scan completed across 3m, 5m and 15m closed candles.';
+  $('perfStatus').textContent='Cycle '+cycle+' · '+eligible.length+' eligible · '+universe.length+' selected · '+missed+' eligible but not selected. RSI threshold scan completed across 3m, 5m and 15m closed candles.';
   $('perfHistory').innerHTML=performanceHistory.slice().reverse().map(x=>'<tr><td>'+x.cycle+'</td><td>'+x.duration.toFixed(2)+'s</td><td>'+x.eligible+'</td><td>'+x.selected+'</td><td>'+x.requests+'</td><td>'+x.peak+'</td><td class="positive">'+x.result+'</td></tr>').join('')||'<tr><td colspan="7">No completed cycles yet.</td></tr>';
 
   $('diagStatus').textContent='Universe cycle '+cycle+' completed · '+universe.length+' selected from '+eligible.length+' eligible contracts · peak concurrent REST requests: '+diagnostics.peakRequests+'.';
