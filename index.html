@@ -172,7 +172,7 @@ let rsiScanStats={checked:0,qualified:0,errors:0};
 function calculateRsiSeries(closes,period=RSI_PERIOD){
  const out=[]; if(closes.length<=period)return out;
  let gains=0,losses=0;
- for(let i=1;i<=period;i++){const d=closes[i]-closes[i-1];if(d>0)gains+=d;else loss-=d}
+ for(let i=1;i<=period;i++){const d=closes[i]-closes[i-1];if(d>0)gains+=d;else losses-=d}
  let avgGain=gains/period,avgLoss=loss/period;
  const value=()=>avgLoss===0?100:100-(100/(1+avgGain/avgLoss));
  out.push(value());
