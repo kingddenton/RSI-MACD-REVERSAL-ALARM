@@ -466,9 +466,10 @@ async function syncRsiWebSockets(universe){
   const closed=data.filter(row=>Number(row[6])<Date.now());if(!closed.length)return {qualified:false};
   const allCloses=closed.map(row=>Number(row[4])),lastClosedTime=Number(closed[closed.length-1][6]);
   macdCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:allCloses,rows:closed,lastClosedTime});
-  if(job.interval===MACD_ALERT_INTERVAL){const macd=calculateMacdDiagnostic(allCloses);if(macd)macdAlertState.set(job.coin.symbol,{hist:macd.hist,lastClosedTime});return {qualified:false};}
-  if(ST_INTERVALS.includes(job.interval)){const rows=closed.map(row=>row);const st=calculateSupertrendDirection(rows);if(st)stAlertState.set(rsiHistoryKey(job.coin.symbol,job.interval),{direction:st.direction,lastClosedTime});return {qualified:false};}
-  if(EMA_ALERT_INTERVALS.includes(job.interval)){const ema=calculateEmaSignal(allCloses);if(ema)emaAlertState.set(rsiHistoryKey(job.coin.symbol,job.interval),{bearish:ema.bearish,lastClosedTime});return {qualified:false};}
+  if(job.interval===MACD_ALERT_INTERVAL){const macd=calculateMacdDiagnostic(allCloses);if(macd)macdAlertState.set(job.coin.symbol,{hist:macd.hist,lastClosedTime});}
+  if(ST_INTERVALS.includes(job.interval)){const st=calculateSupertrendDirection(closed);if(st)stAlertState.set(rsiHistoryKey(job.coin.symbol,job.interval),{direction:st.direction,lastClosedTime});}
+  if(EMA_ALERT_INTERVALS.includes(job.interval)){const ema=calculateEmaSignal(allCloses);if(ema)emaAlertState.set(rsiHistoryKey(job.coin.symbol,job.interval),{bearish:ema.bearish,lastClosedTime});}
+  if(!RSI_INTERVALS.includes(job.interval))return {qualified:false};
   const rsiCloses=allCloses.slice(-(RSI_PERIOD+required+12));
   rsiCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:rsiCloses,lastClosedTime});
   return {qualified:evaluateClosedRsi(job.coin.symbol,job.interval,lastClosedTime)};
