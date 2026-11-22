@@ -50,7 +50,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
    <article class="outcome-card outcome-ema"><div class="outcome-head"><span>EMA BEARISH</span><span class="outcome-count" id="emaBearishCount">0</span></div><div class="outcome-list" id="emaBearishList"><div class="outcome-empty">No EMA bearish outcomes yet</div></div></article>
   </div>
  </div>
- <p class="note">The four boxes are displayed in one horizontal row. A coin leaves Qualified / Monitoring when its first outcome is triggered, and may appear in multiple outcome boxes. Live RSI contraction qualification is connected. MACD, Supertrend and EMA outcome engines remain inactive.</p>
+ <p class="note">The four boxes are displayed in one horizontal row. A coin leaves Qualified / Monitoring when its first outcome is triggered, and may appear in multiple outcome boxes. Live RSI qualification is connected. MACD RED is triggered by a fresh closed 1m histogram green-to-red transition after RSI qualification. Supertrend and EMA outcome engines are not yet active.</p>
 </section>
 
 <details class="panel monitor-panel" id="diagnostics" open>
@@ -203,7 +203,8 @@ function clearOutcomeBoxes(){
 window.ScannerOutcomeBoxes={qualify:qualifyCoin,evaluateRsiContraction,trigger:triggerCoinOutcome,clear:clearOutcomeBoxes,render:renderOutcomeBoxes};
 
 let averageUniverseSeconds=0;
-const RSI_INTERVALS=['3m','5m','15m'], RSI_PERIOD=14, rsiLastEvaluated=new Map();
+const RSI_INTERVALS=['3m','5m','15m'], RSI_PERIOD=14, MACD_ALERT_INTERVAL='1m', rsiLastEvaluated=new Map();
+const macdAlertState=new Map();
 let rsiScanStats={checked:0,qualified:0,errors:0};
 const rsiDecisionRows=new Map();
 const rsiDecisionStats={evaluations:0,qualified:0,rejected:0,waiting:0};
@@ -376,6 +377,7 @@ function handleRsiSocketMessage(event){
  rsiWsKlineMessages++;rsiWsLastEvent='KLINE '+k.i+(k.x?' CLOSED':' OPEN');
  if(!k.x){renderRsiDiagnostics();return}
  const symbol=String(k.s||'').toUpperCase(),interval=k.i,key=rsiHistoryKey(symbol,interval),history=rsiCandleHistory.get(key),macdHistory=macdCandleHistory.get(key);
+ if(interval===MACD_ALERT_INTERVAL){if(!macdHistory){renderRsiDiagnostics();return}const closeTime=Number(k.T);if(closeTime<=macdHistory.lastClosedTime){renderRsiDiagnostics();return}macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();macdHistory.lastClosedTime=closeTime;const macd=calculateMacdDiagnostic(macdHistory.closes),prior=macdAlertState.get(symbol);if(macd&&prior&&outcomeState.qualified.has(symbol)&&prior.hist>=0&&macd.hist<0){triggerCoinOutcome(symbol,'macdRed',{timeframes:{'1m':macd},interval:'1m',reason:'Closed 1m MACD histogram changed green to red',previousHistogram:prior.hist,histogram:macd.hist});macdAlertState.set(symbol,{hist:macd.hist,lastClosedTime:closeTime});}else if(macd)macdAlertState.set(symbol,{hist:macd.hist,lastClosedTime:closeTime});renderRsiDiagnostics();return}
  if(!history){renderRsiDiagnostics();return}
  const closeTime=Number(k.T);if(closeTime<=history.lastClosedTime){renderRsiDiagnostics();return}
  rsiWsClosedCandles++;history.closes.push(Number(k.c));if(history.closes.length>120)history.closes.shift();
@@ -404,23 +406,24 @@ function connectRsiSocket(){
 async function syncRsiWebSockets(universe){
  rsiOverviewSymbols=universe.map(x=>x.symbol);
  renderRsiOverview();
- const symbols=new Set(universe.map(x=>x.symbol)),wanted=new Set([...symbols].flatMap(s=>RSI_INTERVALS.map(i=>rsiStreamName(s,i))));
+ const symbols=new Set(universe.map(x=>x.symbol)),wanted=new Set([...symbols].flatMap(s=>[...RSI_INTERVALS,MACD_ALERT_INTERVAL].map(i=>rsiStreamName(s,i))));
  const removed=[...rsiSocketWanted].filter(x=>!wanted.has(x)),added=[...wanted].filter(x=>!rsiSocketWanted.has(x));
- const activeHistoryKeys=new Set(universe.flatMap(coin=>RSI_INTERVALS.map(interval=>rsiHistoryKey(coin.symbol,interval))));
+ const activeHistoryKeys=new Set(universe.flatMap(coin=>[...RSI_INTERVALS,MACD_ALERT_INTERVAL].map(interval=>rsiHistoryKey(coin.symbol,interval))));
  for(const key of rsiCandleHistory.keys())if(!activeHistoryKeys.has(key))rsiCandleHistory.delete(key);
  for(const stream of [...rsiWsAcked])if(!wanted.has(stream))rsiWsAcked.delete(stream);
  rsiSocketWanted=wanted;
  if(rsiSocketConnected){for(let i=0;i<removed.length;i+=100)sendRsiSubscription('UNSUBSCRIBE',removed.slice(i,i+100));for(let i=0;i<added.length;i+=100)sendRsiSubscription('SUBSCRIBE',added.slice(i,i+100))}
  else if(wanted.size)connectRsiSocket();
- const jobs=universe.flatMap(coin=>RSI_INTERVALS.filter(interval=>!rsiCandleHistory.has(rsiHistoryKey(coin.symbol,interval))).map(interval=>({coin,interval})));
+ const jobs=universe.flatMap(coin=>[...RSI_INTERVALS,MACD_ALERT_INTERVAL].filter(interval=>interval===MACD_ALERT_INTERVAL?!macdCandleHistory.has(rsiHistoryKey(coin.symbol,interval)):!rsiCandleHistory.has(rsiHistoryKey(coin.symbol,interval))).map(interval=>({coin,interval})));
  const required=3;
  const seeded=await mapLimit(jobs,requestConcurrency,async job=>{
   const data=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(job.coin.symbol)+'&interval='+job.interval+'&limit=100');
   const closed=data.filter(row=>Number(row[6])<Date.now());if(!closed.length)return {qualified:false};
   const allCloses=closed.map(row=>Number(row[4])),lastClosedTime=Number(closed[closed.length-1][6]);
+  macdCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:allCloses,lastClosedTime});
+  if(job.interval===MACD_ALERT_INTERVAL){const macd=calculateMacdDiagnostic(allCloses);if(macd)macdAlertState.set(job.coin.symbol,{hist:macd.hist,lastClosedTime});return {qualified:false};}
   const rsiCloses=allCloses.slice(-(RSI_PERIOD+required+12));
   rsiCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:rsiCloses,lastClosedTime});
-  macdCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:allCloses,lastClosedTime});
   return {qualified:evaluateClosedRsi(job.coin.symbol,job.interval,lastClosedTime)};
  });
  // Reconcile every selected coin only after all three timeframe histories have been seeded.
@@ -436,7 +439,7 @@ async function syncRsiWebSockets(universe){
  rsiScanStats.errors+=failures.length;
  const sampleError=failures.length?String(failures[0].error):'None';
  renderRsiDiagnostics();
- const signalNote=$('signalDiagnostics').querySelector('.note');if(signalNote)signalNote.textContent=failures.length?'RSI history seeding had '+failures.length+' errors in this cycle. First error: '+sampleError:'Live RSI(14) qualification requires RSI at or above the threshold on any one completed 3m, 5m or 15m candle. REST history is seeded only once per selected coin/timeframe.';
+ const signalNote=$('signalDiagnostics').querySelector('.note');if(signalNote)signalNote.textContent=failures.length?'RSI history seeding had '+failures.length+' errors in this cycle. First error: '+sampleError:'Live RSI(14) qualification requires RSI at or above the threshold on any one completed 3m, 5m or 15m candle. MACD RED triggers only on a fresh closed 1m histogram green-to-red transition after RSI qualification.';
  $('perfCache').textContent=rsiSocketConnected?'WebSocket connected':'WebSocket connecting';$('perfJobs').textContent=String(rsiCandleHistory.size);$('perfJobResults').textContent=rsiCycleSeeded+' seeded / '+rsiCycleErrors+' errors';
  setStatus(failures.length?'RSI history seed failed: '+sampleError:'RSI WebSocket monitoring active · '+symbols.size+' coins · '+wanted.size+' streams · cached '+rsiCandleHistory.size+' histories.',!!failures.length);
 }
