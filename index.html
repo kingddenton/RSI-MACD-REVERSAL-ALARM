@@ -106,6 +106,10 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
  <div class="wrap" style="margin:10px 0"><table><thead><tr><th>TIME</th><th>MESSAGE</th><th>DETAIL</th></tr></thead><tbody id="btcWsLog"><tr><td colspan="3" class="muted">Run the isolated BTC test to inspect raw Binance events.</td></tr></tbody></table></div>
  <div class="stats"><span>RSI evaluations: <b id="rsiEvalCount">0</b></span><span>Qualified: <b id="rsiQualifiedCount">0</b></span><span>Below threshold: <b id="rsiRejectedCount">0</b></span><span>Waiting for histories: <b id="rsiWaitingCount">0</b></span></div>
  <div class="wrap" style="margin-top:10px"><table><thead><tr><th>Symbol</th><th>Stage</th><th>Timeframe</th><th>Observed value</th><th>Decision / reason</th></tr></thead><tbody id="rsiDecisionRows"><tr><td colspan="5" class="muted">Waiting for the first closed-candle evaluation.</td></tr></tbody></table></div>
+ <h3 style="margin:16px 0 6px;font-size:14px">LIVE RSI OVERVIEW · RSI(14)</h3>
+ <p class="note">All selected coins and their latest closed-candle RSI values. Qualification uses OR: any one timeframe at or above the threshold qualifies.</p>
+ <div class="stats" id="rsiOverviewStats"></div>
+ <div class="wrap"><table><thead><tr><th>Symbol</th><th>3m RSI</th><th>5m RSI</th><th>15m RSI</th><th>Status</th><th>Qualifying TF</th></tr></thead><tbody id="rsiOverviewRows"><tr><td colspan="6" class="muted">Waiting for RSI histories.</td></tr></tbody></table></div>
  <h3 style="margin:16px 0 6px;font-size:14px">MACD DIAGNOSTICS · 12, 26, 9</h3>
  <p class="note">Diagnostic only. DIF, DEA and histogram are calculated from the same closed-candle histories. MACD does not qualify coins or trigger alerts.</p>
  <div class="wrap"><table><thead><tr><th>Symbol</th><th>Timeframe</th><th>DIF</th><th>DEA</th><th>Histogram</th><th>Position</th></tr></thead><tbody id="macdDiagnosticRows"><tr><td colspan="6" class="muted">Waiting for closed-candle MACD calculations.</td></tr></tbody></table></div>
@@ -186,6 +190,7 @@ let rsiScanStats={checked:0,qualified:0,errors:0};
 const rsiDecisionRows=new Map();
 const rsiDecisionStats={evaluations:0,qualified:0,rejected:0,waiting:0};
 const macdDiagnosticRows=new Map();
+let rsiOverviewSymbols=[];
 function emaSeries(values,period){
  const out=[];if(values.length<period)return out;
  const k=2/(period+1);let ema=values.slice(0,period).reduce((a,b)=>a+b,0)/period;
@@ -244,6 +249,25 @@ const rsiWsPending=new Map(),rsiWsAcked=new Set();
 let rsiWsAckErrors=0,rsiWsMessages=0,rsiWsKlineMessages=0,rsiWsClosedCandles=0,rsiWsLastMessage='Never',rsiWsLastEvent='None',rsiCycleSeeded=0,rsiCycleErrors=0;
 function rsiStreamName(symbol,interval){return symbol.toLowerCase()+'@kline_'+interval}
 function rsiHistoryKey(symbol,interval){return symbol+'|'+interval}
+function renderRsiOverview(){
+ const threshold=Math.max(1,Math.min(99,Number($('rsiThreshold').value)||70));
+ let qualified=0,waiting=0,rejected=0;
+ const rows=[];
+ for(const symbol of rsiOverviewSymbols){
+  const readings={};
+  for(const tf of RSI_INTERVALS){
+   const h=rsiCandleHistory.get(rsiHistoryKey(symbol,tf));
+   if(h&&h.closes.length>RSI_PERIOD){const values=calculateRsiSeries(h.closes);if(values.length)readings[tf]=values[values.length-1]}
+  }
+  const qualifying=RSI_INTERVALS.filter(tf=>Number.isFinite(readings[tf])&&readings[tf]>=threshold);
+  const missing=RSI_INTERVALS.filter(tf=>!Number.isFinite(readings[tf]));
+  const status=qualifying.length?'QUALIFIED':missing.length?'WAITING':'REJECTED';
+  if(status==='QUALIFIED')qualified++;else if(status==='WAITING')waiting++;else rejected++;
+  rows.push('<tr><td><b>'+symbol+'</b></td>'+RSI_INTERVALS.map(tf=>'<td>'+ (Number.isFinite(readings[tf])?readings[tf].toFixed(2):'—')+'</td>').join('')+'<td>'+status+'</td><td>'+(qualifying.length?qualifying.join(' OR '):missing.length?'Missing: '+missing.join(', '):'Below '+threshold+' on all TFs')+'</td></tr>');
+ }
+ $('rsiOverviewStats').innerHTML='<span>Selected: <b>'+rsiOverviewSymbols.length+'</b></span><span>Currently qualified: <b>'+qualified+'</b></span><span>Rejected: <b>'+rejected+'</b></span><span>Waiting: <b>'+waiting+'</b></span><span>Rule: <b>RSI ≥ '+threshold+' on any one timeframe</b></span>';
+ $('rsiOverviewRows').innerHTML=rows.length?rows.join(''):'<tr><td colspan="6" class="muted">No selected coins.</td></tr>';
+}
 function renderRsiDecisionDiagnostics(){
  const rows=[...rsiDecisionRows.values()];
  $('rsiEvalCount').textContent=String(rsiDecisionStats.evaluations);
@@ -258,6 +282,7 @@ function recordRsiDecision(symbol,stage,readings,reason){
  rsiDecisionRows.set(key,{symbol:key,stage,values,reason});
  while(rsiDecisionRows.size>30)rsiDecisionRows.delete(rsiDecisionRows.keys().next().value);
  renderRsiDecisionDiagnostics();
+ renderRsiOverview();
 }
 function evaluateAllTimeframeRsi(symbol){
  const threshold=Math.max(1,Math.min(99,Number($('rsiThreshold').value)||70));
@@ -341,6 +366,7 @@ function handleRsiSocketMessage(event){
  rsiScanStats.checked++;
  evaluateClosedRsi(symbol,interval,closeTime);
  updateMacdDiagnostic(symbol);
+ renderRsiOverview();
  renderRsiDiagnostics();
 }
 function sendRsiSubscription(method,streams){
@@ -358,6 +384,8 @@ function connectRsiSocket(){
  rsiSocket.onclose=()=>{rsiSocketConnected=false;rsiSocket=null;if(rsiSocketWanted.size&&!stopRequested)rsiReconnectTimer=setTimeout(connectRsiSocket,5000)};
 }
 async function syncRsiWebSockets(universe){
+ rsiOverviewSymbols=universe.map(x=>x.symbol);
+ renderRsiOverview();
  const symbols=new Set(universe.map(x=>x.symbol)),wanted=new Set([...symbols].flatMap(s=>RSI_INTERVALS.map(i=>rsiStreamName(s,i))));
  const removed=[...rsiSocketWanted].filter(x=>!wanted.has(x)),added=[...wanted].filter(x=>!rsiSocketWanted.has(x));
  const activeHistoryKeys=new Set(universe.flatMap(coin=>RSI_INTERVALS.map(interval=>rsiHistoryKey(coin.symbol,interval))));
@@ -378,6 +406,7 @@ async function syncRsiWebSockets(universe){
   return {qualified:evaluateClosedRsi(job.coin.symbol,job.interval,lastClosedTime)};
  });
  for(const coin of universe)updateMacdDiagnostic(coin.symbol);
+ renderRsiOverview();
  const failures=seeded.output.filter(x=>x&&x.error);
  rsiCycleSeeded=seeded.done;rsiCycleErrors=failures.length;
  rsiScanStats.errors+=failures.length;
