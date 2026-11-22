@@ -182,8 +182,9 @@ function renderOutcomeBox(key){
 function renderOutcomeBoxes(){Object.keys(outcomeConfig).forEach(renderOutcomeBox)}
 function qualifyCoin(symbol,details={}){
  const key=String(symbol||'').trim().toUpperCase();if(!key)return;
+ const existingQualified=outcomeState.qualified.get(key);
  outcomeState.qualified.delete(key);
- outcomeState.qualified.set(key,{symbol:key,time:details.time||new Date().toLocaleTimeString(),qualifiedAtMs:Date.now(),details});
+ outcomeState.qualified.set(key,{symbol:key,time:existingQualified?existingQualified.time:(details.time||new Date().toLocaleTimeString()),qualifiedAtMs:existingQualified?existingQualified.qualifiedAtMs:Date.now(),details});
  qualifiedMacdWatchlist.add(key);
  const baseline=macdAlertState.get(key);
  if(baseline){
