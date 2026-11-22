@@ -405,13 +405,13 @@ function handleRsiSocketMessage(event){
  rsiWsKlineMessages++;rsiWsLastEvent='KLINE '+k.i+(k.x?' CLOSED':' OPEN');
  if(!k.x){renderRsiDiagnostics();return}
  const symbol=String(k.s||'').toUpperCase(),interval=k.i,key=rsiHistoryKey(symbol,interval),history=rsiCandleHistory.get(key),macdHistory=macdCandleHistory.get(key);
- if(interval===MACD_ALERT_INTERVAL){if(!macdHistory){renderRsiDiagnostics();return}const closeTime=Number(k.T);if(closeTime<=macdHistory.lastClosedTime){renderRsiDiagnostics();return}macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();macdHistory.lastClosedTime=closeTime;const macd=calculateMacdDiagnostic(macdHistory.closes),prior=macdAlertState.get(symbol);if(macd&&prior&&outcomeState.qualified.has(symbol)&&prior.hist>=0&&macd.hist<0){triggerCoinOutcome(symbol,'macdRed',{timeframes:{'1m':macd},interval:'1m',reason:'Closed 1m MACD histogram changed green to red',previousHistogram:prior.hist,histogram:macd.hist});macdAlertState.set(symbol,{hist:macd.hist,lastClosedTime:closeTime});}else if(macd)macdAlertState.set(symbol,{hist:macd.hist,lastClosedTime:closeTime});renderRsiDiagnostics();return}
+ if(interval===MACD_ALERT_INTERVAL){if(!macdHistory){renderRsiDiagnostics();return}const closeTime=Number(k.T);if(closeTime<=macdHistory.lastClosedTime){renderRsiDiagnostics();return}macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift()}macdHistory.lastClosedTime=closeTime;const macd=calculateMacdDiagnostic(macdHistory.closes),prior=macdAlertState.get(symbol);if(macd&&prior&&outcomeState.qualified.has(symbol)&&prior.hist>=0&&macd.hist<0){triggerCoinOutcome(symbol,'macdRed',{timeframes:{'1m':macd},interval:'1m',reason:'Closed 1m MACD histogram changed green to red',previousHistogram:prior.hist,histogram:macd.hist});macdAlertState.set(symbol,{hist:macd.hist,lastClosedTime:closeTime});}else if(macd)macdAlertState.set(symbol,{hist:macd.hist,lastClosedTime:closeTime});renderRsiDiagnostics();return}
  if(ST_INTERVALS.includes(interval)||EMA_ALERT_INTERVALS.includes(interval)){
   if(!macdHistory){renderRsiDiagnostics();return}
   const closeTime=Number(k.T);if(closeTime<=macdHistory.lastClosedTime){renderRsiDiagnostics();return}
   macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();macdHistory.lastClosedTime=closeTime;
   if(ST_INTERVALS.includes(interval)){
-   const st=calculateSupertrendDirection(macdHistory.closes.map((c,i)=>[0,c,c,c,c,0,0]));
+   const st=calculateSupertrendDirection(macdHistory.rows||[]);
    const prior=stAlertState.get(key);
    if(st&&prior&&outcomeState.qualified.has(symbol)&&prior.direction===1&&st.direction===-1){triggerCoinOutcome(symbol,'stRed',{interval,reason:'Completed candle Supertrend flipped green to red',atrPeriod:10,multiplier:3});}
    if(st)stAlertState.set(key,{direction:st.direction,lastClosedTime:closeTime});
@@ -465,7 +465,7 @@ async function syncRsiWebSockets(universe){
   const data=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(job.coin.symbol)+'&interval='+job.interval+'&limit=100');
   const closed=data.filter(row=>Number(row[6])<Date.now());if(!closed.length)return {qualified:false};
   const allCloses=closed.map(row=>Number(row[4])),lastClosedTime=Number(closed[closed.length-1][6]);
-  macdCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:allCloses,lastClosedTime});
+  macdCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:allCloses,rows:closed,lastClosedTime});
   if(job.interval===MACD_ALERT_INTERVAL){const macd=calculateMacdDiagnostic(allCloses);if(macd)macdAlertState.set(job.coin.symbol,{hist:macd.hist,lastClosedTime});return {qualified:false};}
   if(ST_INTERVALS.includes(job.interval)){const rows=closed.map(row=>row);const st=calculateSupertrendDirection(rows);if(st)stAlertState.set(rsiHistoryKey(job.coin.symbol,job.interval),{direction:st.direction,lastClosedTime});return {qualified:false};}
   if(EMA_ALERT_INTERVALS.includes(job.interval)){const ema=calculateEmaSignal(allCloses);if(ema)emaAlertState.set(rsiHistoryKey(job.coin.symbol,job.interval),{bearish:ema.bearish,lastClosedTime});return {qualified:false};}
