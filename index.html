@@ -50,7 +50,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
    <article class="outcome-card outcome-ema"><div class="outcome-head"><span>EMA BEARISH</span><span class="outcome-count" id="emaBearishCount">0</span></div><div class="outcome-list" id="emaBearishList"><div class="outcome-empty">No EMA bearish outcomes yet</div></div></article>
   </div>
  </div>
- <p class="note">The four boxes are displayed in one horizontal row. A coin leaves Qualified / Monitoring when its first outcome is triggered, and may appear in multiple outcome boxes. Live RSI qualification is connected. MACD RED is triggered by a fresh closed 1m histogram green-to-red transition after RSI qualification. ST RED uses completed-candle ATR(10,3) flips on 1m/3m/5m/15m/30m/1h. EMA BEARISH uses a completed-candle EMA7/25 cross below with EMA99 above both on 1m/3m/5m/15m.</p>
+ <p class="note">The four boxes are displayed in one horizontal row. Qualified / Monitoring is a persistent second universe. MACD, ST and EMA outcomes are labels only; a coin remains in monitoring and may appear in multiple boxes. Live RSI qualification is connected. MACD RED is triggered by a fresh closed 1m histogram green-to-red transition after RSI qualification. ST RED uses completed-candle ATR(10,3) flips on 1m/3m/5m/15m/30m/1h. EMA BEARISH uses a completed-candle EMA7/25 cross below with EMA99 above both on 1m/3m/5m/15m.</p>
 </section>
 
 <details class="panel monitor-panel" id="diagnostics" open>
@@ -205,7 +205,6 @@ function triggerCoinOutcome(symbol,outcome,details={}){
  const key=String(symbol||'').trim().toUpperCase();if(!key)return;
  const target=({macd:'macdRed',macdRed:'macdRed',st:'stRed',stRed:'stRed',ema:'emaBearish',emaBearish:'emaBearish'})[outcome];
  if(!target)throw new Error('Unknown outcome type: '+outcome);
- outcomeState.qualified.delete(key);
  outcomeState[target].delete(key);
  outcomeState[target].set(key,{symbol:key,time:details.time||new Date().toLocaleTimeString(),details});
  renderOutcomeBox('qualified');renderOutcomeBox(target);
@@ -512,25 +511,26 @@ async function syncRsiWebSockets(universe){
  const qualifiedOnlySymbols=[...qualifiedMacdWatchlist].filter(symbol=>!symbols.has(symbol));
  const diagnosticOnlySymbols=MACD_DIAGNOSTIC_WATCHLIST.filter(symbol=>!symbols.has(symbol)&&!qualifiedMacdWatchlist.has(symbol));
  const wanted=new Set([...symbols].flatMap(s=>MONITOR_INTERVALS.map(i=>rsiStreamName(s,i))));
- for(const symbol of qualifiedOnlySymbols)wanted.add(rsiStreamName(symbol,MACD_ALERT_INTERVAL));
+ for(const symbol of qualifiedOnlySymbols)for(const interval of MONITOR_INTERVALS)wanted.add(rsiStreamName(symbol,interval));
  for(const symbol of diagnosticOnlySymbols)wanted.add(rsiStreamName(symbol,MACD_ALERT_INTERVAL));
  const removed=[...rsiSocketWanted].filter(x=>!wanted.has(x)),added=[...wanted].filter(x=>!rsiSocketWanted.has(x));
  const activeHistoryKeys=new Set(universe.flatMap(coin=>MONITOR_INTERVALS.map(interval=>rsiHistoryKey(coin.symbol,interval))));
  for(const symbol of diagnosticOnlySymbols)activeHistoryKeys.add(rsiHistoryKey(symbol,MACD_ALERT_INTERVAL));
- for(const symbol of qualifiedOnlySymbols)activeHistoryKeys.add(rsiHistoryKey(symbol,MACD_ALERT_INTERVAL));
+ for(const symbol of qualifiedOnlySymbols)for(const interval of MONITOR_INTERVALS)activeHistoryKeys.add(rsiHistoryKey(symbol,interval));
  for(const key of rsiCandleHistory.keys())if(!activeHistoryKeys.has(key))rsiCandleHistory.delete(key);
  for(const stream of [...rsiWsAcked])if(!wanted.has(stream))rsiWsAcked.delete(stream);
  rsiSocketWanted=wanted;
  if(rsiSocketConnected){for(let i=0;i<removed.length;i+=100)sendRsiSubscription('UNSUBSCRIBE',removed.slice(i,i+100));for(let i=0;i<added.length;i+=100)sendRsiSubscription('SUBSCRIBE',added.slice(i,i+100))}
  else if(wanted.size)connectRsiSocket();
- const jobs=universe.flatMap(coin=>MONITOR_INTERVALS.filter(interval=>{
-  const key=rsiHistoryKey(coin.symbol,interval);
-  const needsRsi=RSI_INTERVALS.includes(interval)&&!rsiCandleHistory.has(key);
+ const seedSymbols=[...new Set([...universe.map(coin=>coin.symbol),...qualifiedOnlySymbols])];
+ const jobs=seedSymbols.flatMap(symbol=>MONITOR_INTERVALS.filter(interval=>{
+  const key=rsiHistoryKey(symbol,interval);
+  const needsRsi=universe.some(coin=>coin.symbol===symbol)&&RSI_INTERVALS.includes(interval)&&!rsiCandleHistory.has(key);
   const needsIndicator=MACD_DIAGNOSTIC_INTERVALS.includes(interval)||interval===MACD_ALERT_INTERVAL||ST_INTERVALS.includes(interval)||EMA_ALERT_INTERVALS.includes(interval);
   const needsIndicatorHistory=needsIndicator&&!macdCandleHistory.has(key);
   return needsRsi||needsIndicatorHistory;
- }).map(interval=>({coin,interval})));
- for(const symbol of [...diagnosticOnlySymbols,...qualifiedOnlySymbols])if(!macdCandleHistory.has(rsiHistoryKey(symbol,MACD_ALERT_INTERVAL)))jobs.push({coin:{symbol},interval:MACD_ALERT_INTERVAL});
+ }).map(interval=>({coin:{symbol},interval})));
+ for(const symbol of diagnosticOnlySymbols)if(!macdCandleHistory.has(rsiHistoryKey(symbol,MACD_ALERT_INTERVAL)))jobs.push({coin:{symbol},interval:MACD_ALERT_INTERVAL});
  const required=3;
  const seeded=await mapLimit(jobs,requestConcurrency,async job=>{
   const data=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(job.coin.symbol)+'&interval='+job.interval+'&limit=100');
