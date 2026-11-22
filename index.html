@@ -3,295 +3,158 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RSI–MACD Reversal Alarm</title>
+<title>RSI MACD Reversal Alarm</title>
 <style>
-:root{color-scheme:dark;--bg:#0b1220;--panel:#121c2d;--panel2:#18253a;--line:#293950;--text:#e8eef7;--muted:#9aabc1;--green:#25c58a;--red:#ff6474;--amber:#f2bd55;--blue:#72a7ff}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-.wrap{max-width:1400px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
-h1{font-size:24px;margin:0;font-weight:750}.sub{color:var(--muted);font-size:13px;margin-top:3px}
-.status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}.dot{width:9px;height:9px;border-radius:50%;background:#66758b}.dot.on{background:var(--green);box-shadow:0 0 10px #25c58a88}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px;margin-bottom:14px}
-h2{font-size:17px;margin:0 0 12px}.settings{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:12px;align-items:end}
-label{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}input,select{width:100%;background:#0d1727;border:1px solid var(--line);border-radius:8px;color:var(--text);padding:9px;font:inherit;min-width:0}
-.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}button{border:1px solid var(--line);border-radius:8px;padding:9px 14px;background:var(--panel2);color:var(--text);font-weight:650;cursor:pointer}button.primary{background:#1d6b55;border-color:#23866a}button:disabled{opacity:.45;cursor:not-allowed}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.boxhead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.count{background:var(--panel2);padding:3px 9px;border-radius:20px;color:var(--muted);font-size:12px}
-table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;color:var(--muted);font-weight:600;padding:9px 7px;border-bottom:1px solid var(--line);white-space:nowrap}td{padding:10px 7px;border-bottom:1px solid #223148;white-space:nowrap}tbody tr:last-child td{border-bottom:0}.coin{font-weight:750;font-size:14px}.green{color:var(--green)}.red{color:var(--red)}.amber{color:var(--amber)}.empty{text-align:center;color:var(--muted);padding:24px 8px}.alarmrow{background:#351b2a}.small{font-size:11px;color:var(--muted)}.footer{color:var(--muted);font-size:12px;margin:10px 2px}.log{max-height:110px;overflow:auto;color:var(--muted);font-size:12px}.log div{padding:3px 0;border-bottom:1px solid #223148}
-.perf-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px}.metric{background:#0d1727;border:1px solid var(--line);border-radius:9px;padding:10px;min-width:0}.metric .value{font-size:19px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metric .name{font-size:11px;color:var(--muted);margin-top:3px}.perf-sub{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin:10px 0 7px}.history{max-height:190px;overflow:auto}@media(max-width:850px){.settings{grid-template-columns:repeat(3,minmax(0,1fr))}.grid{grid-template-columns:1fr}.perf-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:480px){.wrap{padding:10px}.settings{grid-template-columns:repeat(2,minmax(0,1fr))}h1{font-size:21px}.panel{padding:12px}}
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121d2d;--line:#26374b;--muted:#91a4b8;--text:#e8f0f8;--green:#36d399;--red:#fb7185;--amber:#fbbf24;--blue:#60a5fa}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:1680px;margin:auto;padding:12px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+h1{font-size:22px;margin:0}.tag{font-size:11px;font-weight:800;letter-spacing:.08em;color:#111827;background:var(--amber);padding:5px 9px;border-radius:6px}
+.sub{color:var(--muted);margin:5px 0 16px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:11px;margin:8px 0}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:7px}.field label{display:block;color:var(--muted);font-size:11px;margin-bottom:5px;font-weight:700}
+input,select,button{width:100%;border:1px solid var(--line);border-radius:7px;padding:7px;background:#0c1625;color:var(--text);font:inherit}
+button{cursor:pointer;font-weight:750;background:#1d4ed8;border-color:#2563eb}button.running{background:#15803d;border-color:#22c55e;color:#fff}button.secondary{background:#18283b;border-color:var(--line)}button.stop{background:#7f1d1d;border-color:#991b1b}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.actions button{width:auto;min-width:110px}
+.status{color:var(--muted);font-size:12px;margin-top:10px}.stats{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:12px}.stats b{color:var(--text)}
+table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}th{color:var(--muted);font-size:11px;position:sticky;top:0;background:var(--panel)}
+.wrap{overflow:auto}.monitor-panel{margin:14px 0}.perf-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}.perf-metric{background:#0c1625;border:1px solid var(--line);border-radius:8px;padding:9px;min-width:0}.perf-metric span{display:block;color:var(--muted);font-size:11px}.perf-metric strong{display:block;font-size:16px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.note{font-size:12px;color:var(--muted)}.muted{color:var(--muted)}.num{font-weight:800}.positive{color:var(--green)}.negative{color:var(--red)}
+#universeDetails>summary{list-style:none}#universeDetails>summary::-webkit-details-marker{display:none}#universeDetails>summary:after{content:'＋';color:var(--blue);font-size:16px}#universeDetails[open]>summary:after{content:'−'}
+@media(max-width:650px){.perf-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){main{padding:11px}h1{font-size:19px}.panel{padding:11px}}
 </style>
 </head>
-<body>
-<div class="wrap">
- <header class="top"><div><h1>RSI–MACD Reversal Alarm</h1><div class="sub">Binance USDⓈ-M · USDT perpetuals · Closed-candle signals only</div></div><div class="status"><span id="dot" class="dot"></span><span id="status">Stopped</span><span>·</span><span id="lastScan">Not scanned yet</span></div></header>
- <section class="panel">
-  <h2>Qualification settings</h2>
-  <div class="settings">
-   <div><label for="rsiPeriod">RSI period</label><input id="rsiPeriod" type="number" min="2" max="50" value="14"></div>
-   <div><label for="rsi3">3M RSI threshold</label><input id="rsi3" type="number" min="1" max="99" step=".1" value="70"></div>
-   <div><label for="rsi5">5M RSI threshold</label><input id="rsi5" type="number" min="1" max="99" step=".1" value="70"></div>
-   <div><label for="rsi15">15M RSI threshold</label><input id="rsi15" type="number" min="1" max="99" step=".1" value="70"></div>
-   <div><label for="topX">Top X gainers</label><input id="topX" type="number" min="0" max="500" step="1" value="10"></div>
-   <div><label for="bottomY">Bottom Y losers</label><input id="bottomY" type="number" min="0" max="500" step="1" value="10"></div>
-   <div><label for="minVolume">Min 24H quote volume (USDT)</label><input id="minVolume" type="number" min="0" step="100000" value="2000000"></div>
-   <div><label for="workers">Concurrent workers (1–20)</label><input id="workers" type="number" min="1" max="20" step="1" value="8" inputmode="numeric"></div>
-   <div><label for="refreshRate">Universe refresh</label><select id="refreshRate"><option value="30">30 seconds</option><option value="60">60 seconds</option><option value="continuous" selected>Continuous</option></select></div>
-  </div>
-  <div class="actions"><button id="start" class="primary">Start monitoring</button><button id="once">Scan once</button><button id="stop" disabled>Stop</button><button id="save">Save settings</button><button id="clear">Clear alarms</button></div>
-  <div class="footer">A coin qualifies when ANY one of its 3M, 5M or 15M closed-candle RSI values reaches its own threshold. Qualification is latched until the 1M MACD alarm fires.</div>
- </section>
- <div class="grid">
-  <section class="panel"><div class="boxhead"><h2>Qualified coins · 1M MACD monitoring</h2><span class="count" id="qualifiedCount">0 monitoring</span></div>
-   <div style="overflow-x:auto"><table><thead><tr><th>Coin</th><th>Trigger TF</th><th>RSI at trigger</th><th>Latest 1M MACD</th><th>Qualified</th></tr></thead><tbody id="qualified"><tr><td colspan="5" class="empty">No qualified coins yet</td></tr></tbody></table></div>
-  </section>
-  <section class="panel"><div class="boxhead"><h2>MACD red alarms</h2><span class="count" id="alarmCount">0 alarms</span></div>
-   <div style="overflow-x:auto"><table><thead><tr><th>Coin</th><th>Trigger TF</th><th>RSI at trigger</th><th>1M MACD change</th><th>Alarm time</th></tr></thead><tbody id="alarms"><tr><td colspan="5" class="empty">No alarms yet</td></tr></tbody></table></div>
-  </section>
+<body><main>
+<div class="top"><h1>RSI–MACD Reversal Alarm</h1><span class="tag">CLEAN FOUNDATION</span></div>
+<p class="sub">Binance USDⓈ-M USDT perpetual scanner · Scanner only · Public market data · No API key required</p>
+
+<section class="panel">
+ <div class="controls">
+  <div class="field"><label for="topCount">TOP GAINERS · X</label><input id="topCount" type="number" min="0" step="1" value="10"></div>
+  <div class="field"><label for="bottomCount">BOTTOM LOSERS · Y</label><input id="bottomCount" type="number" min="0" step="1" value="10"></div>
+  <div class="field"><label for="volume">MIN 24H QUOTE VOLUME (USDT)</label><input id="volume" type="number" min="0" step="100000" value="2000000"></div>
+  <div class="field"><label for="workers">CONCURRENT WORKERS</label><input id="workers" type="number" min="1" max="20" value="8"></div>
+  <div class="field"><label for="refresh">AUTO REFRESH</label><select id="refresh"><option value="0">Off</option><option value="30">Every 30 seconds</option><option value="60" selected>Every 60 seconds</option><option value="120">Every 2 minutes</option><option value="continuous">Continuous · immediately after scan</option></select></div>
  </div>
- <section class="panel"><div class="boxhead"><h2>Coin selection & scan diagnostics</h2><span class="count" id="selectionUpdated">Waiting for universe scan</span></div>
-  <div class="perf-grid">
-   <div class="metric"><div class="value" id="dTotal">—</div><div class="name">Total Binance USDT perpetuals</div></div>
-   <div class="metric"><div class="value" id="dVolume">—</div><div class="name">Passed 24h volume filter</div></div>
-   <div class="metric"><div class="value" id="dGainers">—</div><div class="name">Gainers ranked</div></div>
-   <div class="metric"><div class="value" id="dLosers">—</div><div class="name">Losers ranked</div></div>
-   <div class="metric"><div class="value" id="dSelected">—</div><div class="name">Selected universe</div></div>
-   <div class="metric"><div class="value" id="dQueued">0</div><div class="name">Jobs queued</div></div>
-   <div class="metric"><div class="value" id="dStarted">0</div><div class="name">Jobs started</div></div>
-   <div class="metric"><div class="value" id="dCompleted">0</div><div class="name">Jobs completed</div></div>
-   <div class="metric"><div class="value" id="dFailed">0</div><div class="name">Jobs failed</div></div>
-   <div class="metric"><div class="value" id="dRejected">0</div><div class="name">Not qualified / already tracked</div></div>
-   <div class="metric"><div class="value" id="dCooldown">0 ms</div><div class="name">Current Binance cooldown</div></div>
-   <div class="metric"><div class="value" id="dRequestGap">150 ms</div><div class="name">REST request-start spacing</div></div>
-  </div>
-  <div class="perf-sub"><span id="dSelectionRule">Selection: Top 10 gainers + Bottom 10 losers</span><span id="dLastUniverse">Last universe refresh: —</span></div><div class="perf-sub"><strong>Selected coins</strong><span id="dSelectedSummary">No universe loaded</span></div><div style="overflow:auto;max-height:280px"><table><thead><tr><th>Coin</th><th>Selection</th><th>24H change</th><th>24H quote volume</th></tr></thead><tbody id="selectedCoins"><tr><td colspan="4">No coins selected yet</td></tr></tbody></table></div><div class="perf-sub"><strong>Coin qualification funnel</strong><span id="dSignalSummary">Waiting for scan</span></div><div style="overflow:auto;max-height:360px"><table><thead><tr><th>Coin</th><th>3M RSI</th><th>5M RSI</th><th>15M RSI</th><th>Trigger</th><th>1M MACD</th><th>Outcome</th></tr></thead><tbody id="signalCoins"><tr><td colspan="7">No scan results yet</td></tr></tbody></table></div><div class="perf-sub"><strong>Coin rejection details</strong><span id="dRejectSummary">No coins rejected yet</span></div><div style="overflow:auto;max-height:260px"><table><thead><tr><th>Coin</th><th>Reason rejected</th><th>RSI details</th></tr></thead><tbody id="rejectedCoins"><tr><td colspan="3">No rejection details yet</td></tr></tbody></table></div><div class="perf-sub"><strong>Full eligible-universe audit</strong><span id="dUniverseAuditSummary">Waiting for universe scan</span></div><div style="overflow:auto;max-height:360px"><table><thead><tr><th>24H rank</th><th>Coin</th><th>24H change</th><th>24H quote volume</th><th>Selection</th><th>Why</th></tr></thead><tbody id="universeAudit"><tr><td colspan="6">No universe audit yet</td></tr></tbody></table></div>
- </section>
- <section class="panel"><div class="boxhead"><h2>Performance indicators</h2><span class="count" id="perfUpdated">Waiting for first scan</span></div>
-  <div class="perf-grid">
-   <div class="metric"><div class="value" id="pScanned">0</div><div class="name">Coins scanned · latest cycle</div></div>
-   <div class="metric"><div class="value" id="pSpeed">—</div><div class="name">Scan speed · coins/sec</div></div>
-   <div class="metric"><div class="value" id="pDuration">—</div><div class="name">Scan duration</div></div>
-   <div class="metric"><div class="value" id="pWorkers">0 / 0</div><div class="name">Active workers / peak</div></div>
-   <div class="metric"><div class="value" id="pQualified">0</div><div class="name">Qualified coins</div></div>
-   <div class="metric"><div class="value" id="pLatency">—</div><div class="name">1M MACD detection latency</div></div>
-   <div class="metric"><div class="value" id="pRequests">0</div><div class="name">API requests · session</div></div>
-   <div class="metric"><div class="value" id="pResponse">—</div><div class="name">Average API response</div></div>
-   <div class="metric"><div class="value" id="pSuccess">0</div><div class="name">Successful requests</div></div>
-   <div class="metric"><div class="value" id="pFailed">0</div><div class="name">Failed requests</div></div>
-   <div class="metric"><div class="value" id="pRate">0</div><div class="name">Rate-limit events · 418/429</div></div>
-   <div class="metric"><div class="value" id="pCache">0 / 0</div><div class="name">Candle cache hits / misses</div></div><div class="metric"><div class="value" id="pUniverseTime">—</div><div class="name">Universe loading duration</div></div><div class="metric"><div class="value" id="pPerCoin">—</div><div class="name">Average scan time per coin</div></div><div class="metric"><div class="value" id="pRequestLoad">0 / 0</div><div class="name">Active / peak REST requests</div></div>
-  </div>
-  <div class="perf-sub"><span id="pLastSuccess">Last successful API response: —</span><span id="pTransport">Data transport: REST polling</span></div>
-  <div class="perf-sub"><strong>Last 10 scan cycles</strong><span>Per-cycle coins · duration · speed · failures</span></div>
-  <div class="history"><table><thead><tr><th>Time</th><th>Coins</th><th>Duration</th><th>Coins/sec</th><th>Failures</th></tr></thead><tbody id="perfHistory"><tr><td colspan="5" class="empty">No scan cycles recorded yet</td></tr></tbody></table></div>
- </section>
- <section class="panel"><div class="boxhead"><h2>Activity</h2><span class="count" id="universeCount">Universe: —</span></div><div class="log" id="log"><div>Ready. Start monitoring or run a one-time scan.</div></div></section>
- <div class="footer">MACD colour convention: green = histogram rising versus the previous completed 1M candle; red = histogram falling. An alarm requires a confirmed green-to-red transition, not a zero-line cross. Signals are informational only; no orders are placed.</div>
-</div>
+ <div class="actions"><button id="start">Start scanning</button><button id="once" class="secondary">Scan universe once</button><button id="stop" class="stop">Stop</button><button id="save" class="secondary">Save settings</button></div>
+ <div class="status" id="status">Ready. This first stage loads and displays the selected market universe only.</div>
+ <div class="stats" style="margin-top:9px"><span>Eligible pairs: <b id="eligible">—</b></span><span>Selected pairs: <b id="selected">—</b></span><span>Last universe update: <b id="last">—</b></span></div>
+</section>
+
+<details class="panel monitor-panel" id="diagnostics" open>
+ <summary style="cursor:pointer;font-size:15px;font-weight:750;list-style:none">UNIVERSE DIAGNOSTICS</summary>
+ <p class="note">Market-universe accounting only. These diagnostics do not apply RSI, MACD, or alert conditions.</p>
+ <div class="perf-grid">
+  <div class="perf-metric"><span>Exchange contracts received</span><strong id="dContracts">—</strong></div>
+  <div class="perf-metric"><span>USDT perpetuals</span><strong id="dPerpetuals">—</strong></div>
+  <div class="perf-metric"><span>Passed volume filter</span><strong id="dVolume">—</strong></div>
+  <div class="perf-metric"><span>Selected gainers</span><strong id="dGainers">—</strong></div>
+  <div class="perf-metric"><span>Selected losers</span><strong id="dLosers">—</strong></div>
+  <div class="perf-metric"><span>Duplicate overlap removed</span><strong id="dOverlap">—</strong></div>
+  <div class="perf-metric"><span>REST requests</span><strong id="dRequests">—</strong></div>
+  <div class="perf-metric"><span>Universe load time</span><strong id="dDuration">—</strong></div>
+ </div>
+ <div class="status" id="diagStatus">Waiting for the first universe load.</div>
+</details>
+
+<section class="panel">
+ <details id="universeDetails" open>
+  <summary style="cursor:pointer;font-weight:800;display:flex;justify-content:space-between;gap:12px;align-items:center"><span>Selected Universe · <span id="universeCount">0</span> coins</span><span class="note">Tap to collapse / expand</span></summary>
+  <div class="stats" style="margin:10px 0"><span>Eligible after volume filter: <b id="eligibleCount">0</b></span><span>Selection: <b id="universeRule">Top 10 / Bottom 10 · 24H price change</b></span><span>Minimum quote volume: <b id="volumeRule">2,000,000 USDT</b></span></div>
+  <div class="wrap"><table><thead><tr><th>#</th><th>SIDE</th><th>SYMBOL</th><th>24H CHANGE</th><th>24H QUOTE VOLUME (USDT)</th></tr></thead><tbody id="universeRows"><tr><td colspan="5" class="muted">Universe will appear when scanning starts.</td></tr></tbody></table></div>
+ </details>
+</section>
+</main>
 <script>
-(() => {
-'use strict';
-const API='https://fapi.binance.com';
-const $=id=>document.getElementById(id);
-const perf={requests:0,success:0,failed:0,rateLimits:0,responseMs:0,activeWorkers:0,peakWorkers:0,lastSuccess:0,lastLatency:null,cycles:[],cacheHits:0,cacheMisses:0,universeMs:0,coinTimes:new Map(),peakRequests:0,latest:{scanned:0,duration:0,speed:0,failed:0,avgPerCoin:0,universeMs:0,cacheHits:0,cacheMisses:0}};
-const diag={totalPairs:0,volumeEligible:0,gainers:0,losers:0,selected:0,queued:0,started:0,completed:0,failed:0,rejected:0,lastUniverse:0,rejections:[],signalRows:[],eligibleAudit:[],reasons:{alreadyTracked:0,rsiBelow:0,insufficientRsi:0,insufficientMacd:0,errors:0}};
-let nextRequestAt=0,cooldownUntil=0,requestGate=Promise.resolve(),activeRequests=0,peakActiveRequests=0,requestConcurrency=8;
-const requestWaiters=[];
-const candleCache=new Map();
-const state={running:false,scanBusy:false,universe:[],qualified:new Map(),alarms:[],timer:null,ws:null,wsReconnectTimer:null,wsBackoff:1000,wsRequestId:0,wsSubs:new Set(),candleSockets:[],candleReconnects:new Map(),exchangeReady:false};
-const candleWsFresh=new Map();
-const settings=()=>({period:clamp(+$('rsiPeriod').value,2,50,14),r3:clamp(+$('rsi3').value,1,99,70),r5:clamp(+$('rsi5').value,1,99,70),r15:clamp(+$('rsi15').value,1,99,70),topX:clamp(+$('topX').value,0,500,10),bottomY:clamp(+$('bottomY').value,0,500,10),volume:Math.max(0,+$('minVolume').value||0),workers:clamp(+$('workers').value,1,20,8),refresh:$('refreshRate').value});
-function clamp(v,min,max,def){return Number.isFinite(v)?Math.min(max,Math.max(min,v)):def}
-function log(msg){const d=document.createElement('div');d.textContent=new Date().toLocaleTimeString()+' · '+msg;$('log').prepend(d);while($('log').children.length>40)$('log').lastChild.remove()}
-function setStatus(s,on=state.running){$('status').textContent=s;$('dot').classList.toggle('on',on)}
+(()=>{'use strict';
+const API='https://fapi.binance.com',STORE='reversal-alarm-shell-v1', $=id=>document.getElementById(id);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-async function waitForRequestSlot(){let release;const previous=requestGate;requestGate=new Promise(resolve=>release=resolve);await previous;try{const wait=Math.max(0,nextRequestAt-Date.now(),cooldownUntil-Date.now());if(wait)await sleep(wait);nextRequestAt=Date.now()+150}finally{release()}}
-async function acquireRequestSlot(){while(Date.now()<cooldownUntil)await sleep(Math.min(1000,cooldownUntil-Date.now()));if(activeRequests<requestConcurrency){activeRequests++;peakActiveRequests=Math.max(peakActiveRequests,activeRequests);perf.peakRequests=Math.max(perf.peakRequests,activeRequests);return}await new Promise(resolve=>requestWaiters.push(resolve));return}
+let running=false,stopRequested=false,scanBusy=false,loopTimer=null,rateLimitUntil=0;
+let requestConcurrency=8,activeRequests=0,requestWaiters=[],exchangeInfoCache=null,cycle=0;
+const diagnostics={requests:0,peakRequests:0};
+const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
+function setStatus(message,error=false){$('status').textContent=message;$('status').className='status'+(error?' negative':'')}
+function setRunning(active){$('start').classList.toggle('running',active);$('start').textContent=active?'Scanning…':'Start scanning'}
+function settings(){return {topCount:$('topCount').value,bottomCount:$('bottomCount').value,volume:$('volume').value,workers:$('workers').value,refresh:$('refresh').value}}
+function saveSettings(){try{localStorage.setItem(STORE,JSON.stringify(settings()));setStatus('Settings saved in this browser.')}catch(e){setStatus('Could not save settings in this browser.',true)}}
+function loadSettings(){try{const s=JSON.parse(localStorage.getItem(STORE)||'{}');for(const [k,v] of Object.entries(s))if($(k))$(k).value=v}catch(e){}}
+async function acquireRequestSlot(){
+ while(Date.now()<rateLimitUntil)await sleep(Math.min(1000,rateLimitUntil-Date.now()));
+ if(activeRequests<requestConcurrency){activeRequests++;diagnostics.peakRequests=Math.max(diagnostics.peakRequests,activeRequests);return}
+ await new Promise(resolve=>requestWaiters.push(resolve));
+}
 function releaseRequestSlot(){if(requestWaiters.length){requestWaiters.shift()();return}activeRequests=Math.max(0,activeRequests-1)}
-async function getJSON(path){let attempt=0;while(true){await acquireRequestSlot();await waitForRequestSlot();const started=performance.now();perf.requests++;const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),20000);try{const r=await fetch(API+path,{cache:'no-store',signal:controller.signal});perf.responseMs+=performance.now()-started;if(r.status===418||r.status===429){perf.failed++;perf.rateLimits++;const retry=Number(r.headers.get('Retry-After'))*1000||Math.min(60000,2000*Math.pow(2,attempt));cooldownUntil=Math.max(cooldownUntil,Date.now()+retry);renderDiagnostics();if(attempt++<3){log('Binance rate limit '+r.status+'; cooling down '+Math.ceil(retry/1000)+'s before retry.');continue}throw new Error('Binance HTTP '+r.status+' after retries')}if(!r.ok){perf.failed++;throw new Error('Binance HTTP '+r.status)}const data=await r.json();perf.success++;perf.lastSuccess=Date.now();return data}catch(e){if(!String(e.message).includes('Binance HTTP')){perf.failed++;if(controller.signal.aborted)e=new Error('Binance request timed out after 20 seconds');if(attempt<3&&/Failed to fetch|NetworkError|timed out/i.test(e.message)){await sleep(1000*Math.pow(2,attempt++));continue}}throw e}finally{clearTimeout(timeout);releaseRequestSlot();renderPerformance()}}}
-function intervalMs(tf){return ({'1m':60000,'3m':180000,'5m':300000,'15m':900000})[tf]||60000}
-function cacheKlineEvent(k){
- if(!k||!k.s||!k.i)return;
- const key=k.s+'|'+k.i,row=[Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T),Number(k.q),Number(k.n),Number(k.V),Number(k.Q),Number(k.B||0)];
- if(!row.every(Number.isFinite))return;
- const rows=candleCache.get(key)||[],index=rows.findIndex(x=>Number(x[0])===row[0]);
- if(index>=0)rows[index]=row;else rows.push(row);
- rows.sort((a,b)=>Number(a[0])-Number(b[0]));if(rows.length>100)rows.splice(0,rows.length-100);
- candleCache.set(key,rows);candleWsFresh.set(key,Date.now());
-}
-async function cachedKlines(symbol,interval,limit=100){
- const key=symbol+'|'+interval,cached=candleCache.get(key),freshAt=candleWsFresh.get(key),freshWindow=intervalMs(interval)*2;
- if(cached&&cached.length>=40&&freshAt&&Date.now()-freshAt<freshWindow){perf.cacheHits++;return cached}
- if(!cached||cached.length<40){
-  perf.cacheMisses++;
-  const rows=await getJSON('/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+interval+'&limit='+limit);
-  if(!Array.isArray(rows)||!rows.length)throw new Error('Binance returned no candle history for '+symbol+' '+interval);
-  candleCache.set(key,rows.slice(-limit));return rows;
- }
- perf.cacheHits++;
- const rows=await getJSON('/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+interval+'&startTime='+cached[cached.length-1][0]+'&limit='+limit);
- if(!Array.isArray(rows)||!rows.length)return cached;
- const merged=new Map(cached.map(row=>[Number(row[0]),row]));for(const row of rows)merged.set(Number(row[0]),row);
- const updated=[...merged.values()].sort((a,b)=>Number(a[0])-Number(b[0])).slice(-limit);
- if(updated.length<40){const full=await getJSON('/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+interval+'&limit='+limit);candleCache.set(key,full.slice(-limit));return full}
- candleCache.set(key,updated);return updated;
-}
-function cacheClosedKline(symbol,interval,row){const key=symbol+'|'+interval,rows=candleCache.get(key)||[],i=rows.findIndex(x=>Number(x[0])===Number(row[0]));if(i>=0)rows[i]=row;else rows.push(row);rows.sort((a,b)=>Number(a[0])-Number(b[0]));if(rows.length>100)rows.splice(0,rows.length-100);candleCache.set(key,rows)}
-
-async function getUniverse(){
- const started=performance.now();
- const [info,tickers]=await Promise.all([state.exchangeReady?Promise.resolve(null):getJSON('/fapi/v1/exchangeInfo'),getJSON('/fapi/v1/ticker/24hr')]);
- if(info){state.allowed=new Set(info.symbols.filter(x=>x.status==='TRADING'&&x.contractType==='PERPETUAL'&&x.quoteAsset==='USDT').map(x=>x.symbol));state.exchangeReady=true}
- const s=settings(),eligible=tickers.filter(t=>state.allowed.has(t.symbol)&&+t.quoteVolume>=s.volume);
- const gainers=[...eligible].sort((a,b)=>+b.priceChangePercent-+a.priceChangePercent);
- const losers=[...eligible].sort((a,b)=>+a.priceChangePercent-+b.priceChangePercent);
- const selectedSides=new Map();
- gainers.slice(0,s.topX).forEach(t=>selectedSides.set(t.symbol,'Gainer'));
- losers.slice(0,s.bottomY).forEach(t=>selectedSides.set(t.symbol,selectedSides.has(t.symbol)?'Gainer + Loser':'Loser'));
- state.universe=[...selectedSides.keys()].map(symbol=>{const t=eligible.find(x=>x.symbol===symbol);return {...t,selectionSide:selectedSides.get(symbol)}});
- const rankBySymbol=new Map(gainers.map((t,i)=>[t.symbol,i+1]));
- diag.eligibleAudit=gainers.map((t,i)=>{const topRank=i+1,bottomRank=eligible.length-i,side=selectedSides.get(t.symbol)||'',selected=!!side;let reason=selected?(side==='Gainer + Loser'?'Selected in both Top X and Bottom Y':side==='Gainer'?'Selected in Top X gainers':'Selected in Bottom Y losers'):'Outside Top '+s.topX+' gainers and Bottom '+s.bottomY+' losers';return {symbol:t.symbol,rank:topRank,change:+t.priceChangePercent,volume:+t.quoteVolume,side:selected?side:'Not selected',reason,selected,topRank,bottomRank}});
- diag.totalPairs=state.allowed.size;diag.volumeEligible=eligible.length;diag.gainers=gainers.length;diag.losers=losers.length;diag.selected=state.universe.length;diag.queued=state.universe.length;diag.started=0;diag.completed=0;diag.failed=0;diag.rejected=0;diag.rejections=[];diag.signalRows=[];diag.reasons={alreadyTracked:0,rsiBelow:0,insufficientRsi:0,insufficientMacd:0,errors:0};diag.lastUniverse=Date.now();
- perf.universeMs=performance.now()-started;
- $('universeCount').textContent='Universe: '+state.universe.length;renderDiagnostics();
-}
-function syncCandleStreams(){
- const symbols=state.universe.map(x=>x.symbol.toLowerCase()),chunks=[];
- for(let i=0;i<symbols.length;i+=30)chunks.push(symbols.slice(i,i+30));
- const wanted=new Set(chunks.map((chunk,i)=>i));
- for(const [index,ws] of state.candleSockets.entries())if(!wanted.has(index)){try{ws.close()}catch(e){}}
- state.candleSockets=state.candleSockets.slice(0,chunks.length);
- chunks.forEach((chunk,index)=>{
-  const existing=state.candleSockets[index];
-  if(existing&&[WebSocket.OPEN,WebSocket.CONNECTING].includes(existing.readyState))return;
-  const streams=chunk.flatMap(symbol=>['3m','5m','15m'].map(tf=>symbol+'@kline_'+tf)).join('/');
-  try{
-   const ws=new WebSocket('wss://fstream.binance.com/stream?streams='+streams);
-   state.candleSockets[index]=ws;
-   ws.onopen=()=>{log('Candle cache stream '+(index+1)+' connected ('+chunk.length+' symbols).');setTransport('Candle WebSocket cache + 1M alarm stream')};
-   ws.onmessage=event=>{try{const packet=JSON.parse(event.data),k=packet.data&&packet.data.k;if(k)cacheKlineEvent(k)}catch(e){}};
-   ws.onerror=()=>log('Candle cache stream '+(index+1)+' reported a connection error.');
-   ws.onclose=()=>{if(!state.running)return;const prior=state.candleReconnects.get(index)||1000,wait=prior;state.candleReconnects.set(index,Math.min(30000,prior*2));setTimeout(()=>{if(state.running)syncCandleStreams()},wait)};
-  }catch(e){log('Candle cache stream setup failed: '+e.message)}
- });
-}
-function closeCandleStreams(){
- state.candleSockets.forEach(ws=>{if(ws){ws.onclose=null;try{ws.close()}catch(e){}}});
- state.candleSockets=[];state.candleReconnects.clear();
-}
-async function mapLimit(items,limit,fn,onError){let i=0;const workers=Array.from({length:Math.min(limit,items.length)},async()=>{perf.activeWorkers++;perf.peakWorkers=Math.max(perf.peakWorkers,perf.activeWorkers);renderPerformance();try{while(i<items.length){const n=i++,item=items[n],itemStart=performance.now();diag.started++;renderDiagnostics();try{await fn(item);diag.completed++}catch(e){diag.failed++;recordRejection(item.symbol||'Unknown','Scan error: '+e.message,'');recordSignal(item.symbol||'Unknown',{outcome:'Scan error',detail:e.message});if(onError)onError(e,item);else log((item.symbol||'Task')+': '+e.message)}finally{if(item&&item.symbol)perf.coinTimes.set(item.symbol,performance.now()-itemStart)}renderDiagnostics()}}finally{perf.activeWorkers--;renderPerformance()}});await Promise.all(workers)}
-async function klines(symbol,interval,limit=100){return cachedKlines(symbol,interval,limit)}
-function closed(rows){const now=Date.now();return Array.isArray(rows)?rows.filter(k=>Array.isArray(k)&&Number(k[6])<now):[]}
-function rsi(rows,period){const c=closed(rows).map(k=>+k[4]);if(c.length<period+1)return null;let gain=0,loss=0;for(let i=1;i<=period;i++){const d=c[i]-c[i-1];if(d>0)gain+=d;else loss-=d}let ag=gain/period,al=loss/period;for(let i=period+1;i<c.length;i++){const d=c[i]-c[i-1];ag=(ag*(period-1)+Math.max(d,0))/period;al=(al*(period-1)+Math.max(-d,0))/period}return al===0?100:100-100/(1+ag/al)}
-function ema(values,period){const k=2/(period+1);let e=values[0];const out=[e];for(let i=1;i<values.length;i++){e=values[i]*k+e*(1-k);out.push(e)}return out}
-
-function macd(rows){const ks=closed(rows);const closes=ks.map(k=>+k[4]);if(closes.length<40)return null;const fast=ema(closes,12),slow=ema(closes,26),line=fast.map((v,i)=>v-slow[i]),signal=ema(line,9),hist=line.map((v,i)=>v-signal[i]);const n=hist.length;return {hist:hist[n-1],prev:hist[n-2],color:hist[n-1]>hist[n-2]?'green':'red',previousColor:hist[n-2]>hist[n-3]?'green':'red',candleTime:+ks[n-1][6]}}
-function recordSignal(symbol,row){const old=diag.signalRows.findIndex(x=>x.symbol===symbol);const item={symbol,...row};if(old>=0)diag.signalRows[old]=item;else diag.signalRows.push(item);renderDiagnostics()}
-function recordRejection(symbol,reason,details){diag.rejected++;diag.rejections.unshift({symbol,reason,details});diag.rejections=diag.rejections.slice(0,150);const k=reason.startsWith('Already')?'alreadyTracked':reason.startsWith('RSI below')?'rsiBelow':reason.startsWith('Insufficient RSI')?'insufficientRsi':reason.startsWith('Insufficient 1M')?'insufficientMacd':'errors';diag.reasons[k]=(diag.reasons[k]||0)+1;renderDiagnostics()}
-async function qualifySymbol(t){
- const s=settings(),symbol=t.symbol;
- if(state.qualified.has(symbol)||state.alarms.some(a=>a.symbol===symbol)){recordRejection(symbol,'Already qualified or already alarmed','Coin is already monitored or already in the alarm list.');recordSignal(symbol,{outcome:'Already monitored / alarmed',detail:'No duplicate monitoring cycle'});return;}
- const [a,b,c]=await Promise.all([klines(symbol,'3m',100),klines(symbol,'5m',100),klines(symbol,'15m',100)]);
- const vals=[['3M',rsi(a,s.period),s.r3],['5M',rsi(b,s.period),s.r5],['15M',rsi(c,s.period),s.r15]];
- const hit=vals.filter(x=>x[1]!==null&&x[1]>=x[2]).sort((x,y)=>(y[1]-y[2])-(x[1]-x[2]))[0];
- const rsiDetails=vals.map(x=>x[0]+': '+(x[1]===null?'N/A':x[1].toFixed(1)+' / '+x[2])).join(' · ');
- if(!hit){const valid=vals.filter(x=>x[1]!==null);if(!valid.length){recordRejection(symbol,'Insufficient RSI candle history','3M / 5M / 15M did not return enough closed candles.');recordSignal(symbol,{r3:vals[0][1],r5:vals[1][1],r15:vals[2][1],outcome:'Insufficient RSI history',detail:rsiDetails})}else{recordRejection(symbol,'RSI below all thresholds',rsiDetails);recordSignal(symbol,{r3:vals[0][1],r5:vals[1][1],r15:vals[2][1],outcome:'RSI below all thresholds',detail:rsiDetails})}return}
- const rows=closed(await klines(symbol,'1m',100));
- const m=macd(rows);
- if(!m){recordRejection(symbol,'Insufficient 1M MACD history','Not enough completed 1M candles to calculate MACD.');recordSignal(symbol,{r3:vals[0][1],r5:vals[1][1],r15:vals[2][1],trigger:hit[0],outcome:'Insufficient 1M MACD history',detail:'RSI qualified; 1M MACD seed unavailable'});return}
- state.qualified.set(symbol,{symbol,tf:hit[0],rsi:hit[1],qualifiedAt:Date.now(),lastHistTime:m.candleTime,lastColor:m.color,displayColor:m.color,macdRows:rows});
- recordSignal(symbol,{r3:vals[0][1],r5:vals[1][1],r15:vals[2][1],trigger:hit[0],macd:m.color.toUpperCase(),outcome:'Monitoring',detail:'Qualified and latched; waiting for green → red'});
- log(symbol+' qualified on '+hit[0]+' RSI ('+hit[1].toFixed(1)+'). 1M WebSocket monitoring started.');
- if(state.running)syncWebSocketSubscriptions();render();
-}
-
-async function scan(){
- if(state.scanBusy)return;state.scanBusy=true;setStatus('Scanning…');
- const started=performance.now(),failedBefore=perf.failed;
- perf.peakWorkers=0;perf.peakRequests=0;perf.cacheHits=0;perf.cacheMisses=0;perf.coinTimes.clear();perf.universeMs=0;requestConcurrency=settings().workers;peakActiveRequests=0;
- try{await getUniverse();syncCandleStreams();const batch=[...state.universe];await mapLimit(batch,settings().workers,async t=>{await qualifySymbol(t)},()=>{});$('lastScan').textContent='Last scan '+new Date().toLocaleTimeString()}
- catch(e){log('Scan error: '+e.message);setStatus('Connection error',false)}
- finally{
-  const duration=performance.now()-started,scanned=diag.started,coinTimes=[...perf.coinTimes.entries()].map(([symbol,ms])=>({symbol,ms})).sort((a,b)=>a.ms-b.ms),avgPerCoin=coinTimes.length?coinTimes.reduce((sum,x)=>sum+x.ms,0)/coinTimes.length:0;
-  const cycle={time:Date.now(),scanned,duration,speed:duration>0?scanned/(duration/1000):0,failed:perf.failed-failedBefore,universeMs:perf.universeMs,avgPerCoin,cacheHits:perf.cacheHits,cacheMisses:perf.cacheMisses,started:diag.started,completed:diag.completed,notStarted:Math.max(0,diag.queued-diag.started),peakWorkers:perf.peakWorkers,peakRequests:perf.peakRequests,fastest:coinTimes[0]||null,slowest:coinTimes[coinTimes.length-1]||null};
-  perf.latest={scanned,duration,speed:cycle.speed,failed:cycle.failed,avgPerCoin,universeMs:perf.universeMs,cacheHits:perf.cacheHits,cacheMisses:perf.cacheMisses};
-  perf.cycles.unshift(cycle);perf.cycles=perf.cycles.slice(0,10);state.scanBusy=false;renderPerformance();renderDiagnostics();if(state.running)setStatus('Monitoring');
- }
-}
-
-function syncWebSocketSubscriptions(){
- if(!state.running||!state.qualified.size){if(!state.qualified.size)closeWebSocket();return}
- const ws=state.ws;
- if(!ws||ws.readyState!==WebSocket.OPEN){connectWebSocket();return;}
- const wanted=new Set([...state.qualified.keys()].map(s=>s.toLowerCase()+'@kline_1m'));
- const add=[...wanted].filter(x=>!state.wsSubs.has(x)),remove=[...state.wsSubs].filter(x=>!wanted.has(x));
- if(remove.length){ws.send(JSON.stringify({method:'UNSUBSCRIBE',params:remove,id:++state.wsRequestId}));remove.forEach(x=>state.wsSubs.delete(x))}
- if(add.length){ws.send(JSON.stringify({method:'SUBSCRIBE',params:add,id:++state.wsRequestId}));add.forEach(x=>state.wsSubs.add(x))}
- renderPerformance();
-}
-function connectWebSocket(){
- if(!state.running||!state.qualified.size||state.ws&&[WebSocket.OPEN,WebSocket.CONNECTING].includes(state.ws.readyState))return;
- clearTimeout(state.wsReconnectTimer);setTransport('WebSocket connecting…');
+async function getJson(url){
+ diagnostics.requests++;await acquireRequestSlot();const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),20000);
  try{
-  const ws=new WebSocket('wss://fstream.binance.com/ws');state.ws=ws;
-  ws.onopen=()=>{state.wsBackoff=1000;state.wsSubs.clear();setTransport('WebSocket connected');log('Binance Futures WebSocket connected.');syncWebSocketSubscriptions()};
-  ws.onmessage=ev=>{let msg;try{msg=JSON.parse(ev.data)}catch{return}if(msg.e==='kline'&&msg.k&&msg.k.i==='1m'&&msg.k.x)handleClosedKline(msg.s,msg.k)};
-  ws.onerror=()=>setTransport('WebSocket error · reconnecting');
-  ws.onclose=()=>{state.ws=null;state.wsSubs.clear();setTransport('WebSocket disconnected');if(state.running&&state.qualified.size){const wait=state.wsBackoff;state.wsBackoff=Math.min(30000,state.wsBackoff*2);state.wsReconnectTimer=setTimeout(connectWebSocket,wait)}};
- }catch(e){setTransport('WebSocket unavailable');log('WebSocket setup error: '+e.message)}
+  const response=await fetch(url,{cache:'no-store',signal:controller.signal});
+  if(!response.ok){
+   if(response.status===418||response.status===429){const retry=Math.max(1,Number(response.headers.get('Retry-After'))||(response.status===418?120:60));rateLimitUntil=Math.max(rateLimitUntil,Date.now()+retry*1000)}
+   throw new Error('Binance HTTP '+response.status+(rateLimitUntil>Date.now()?' · cooldown '+Math.ceil((rateLimitUntil-Date.now())/1000)+'s':''));
+  }
+  return await response.json();
+ }catch(error){if(controller.signal.aborted)throw new Error('Binance request timed out after 20 seconds');throw error}
+ finally{clearTimeout(timeout);releaseRequestSlot()}
 }
-function closeWebSocket(){clearTimeout(state.wsReconnectTimer);state.wsReconnectTimer=null;if(state.ws){const ws=state.ws;state.ws=null;ws.onclose=null;try{ws.close()}catch(e){}}state.wsSubs.clear();setTransport('WebSocket stopped')}
-function setTransport(label){const el=$('pTransport');if(el)el.textContent='Data transport: '+label}
-function handleClosedKline(symbol,k){
- const q=state.qualified.get(symbol);if(!q)return;
- const row=[k.t,k.o,k.h,k.l,k.c,k.v,k.T,k.q,k.n,k.V,k.Q,k.B];
- cacheClosedKline(symbol,'1m',row);
- if(q.macdRows.some(x=>+x[0]===+k.t))return;
- q.macdRows.push(row);if(q.macdRows.length>120)q.macdRows.shift();
- const m=macd(q.macdRows);if(!m||m.candleTime<=q.lastHistTime)return;
- q.lastHistTime=m.candleTime;q.displayColor=m.color;
- if(q.lastColor==='green'&&m.color==='red'){
-  const detectedAt=Date.now(),latency=Math.max(0,detectedAt-(+k.T));perf.lastLatency=latency;
-  const alarm={symbol:q.symbol,tf:q.tf,rsi:q.rsi,qualifiedAt:q.qualifiedAt,alarmAt:detectedAt,hist:m.hist,latency};
-  state.alarms.unshift(alarm);state.qualified.delete(symbol);playAlarm();
-  log('ALARM: '+symbol+' 1M MACD histogram turned green → red ('+formatMs(latency)+' after candle close).');
-  syncWebSocketSubscriptions();
- }else q.lastColor=m.color;
- render();renderPerformance();
+async function mapLimit(items,limit,fn){
+ let next=0,active=0,peak=0,done=0;const output=new Array(items.length);
+ async function worker(){while(!stopRequested){const index=next++;if(index>=items.length)return;active++;peak=Math.max(peak,active);try{output[index]=await fn(items[index])}catch(error){output[index]={error:error.message}}finally{active--;done++}}}
+ await Promise.all(Array.from({length:Math.min(Math.max(1,limit),items.length)},worker));
+ return {output,done,peak};
 }
-function playAlarm(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;const c=new C();[660,880,660].forEach((f,i)=>{const o=c.createOscillator(),g=c.createGain();o.frequency.value=f;o.type='sine';g.gain.setValueAtTime(.0001,c.currentTime+i*.22);g.gain.exponentialRampToValueAtTime(.16,c.currentTime+i*.22+.025);g.gain.exponentialRampToValueAtTime(.0001,c.currentTime+i*.22+.18);o.connect(g);g.connect(c.destination);o.start(c.currentTime+i*.22);o.stop(c.currentTime+i*.22+.2)});setTimeout(()=>c.close(),1200)}catch(e){log('Audio unavailable; check browser sound permissions')}}
-function renderDiagnostics(){
- const set=(id,v)=>{const el=$(id);if(el)el.textContent=v};
- set('dTotal',diag.totalPairs||'—');set('dVolume',diag.volumeEligible||'—');set('dGainers',diag.gainers||'—');set('dLosers',diag.losers||'—');set('dSelected',diag.selected||'—');set('dQueued',diag.queued);set('dStarted',diag.started);set('dCompleted',diag.completed);set('dFailed',diag.failed);set('dRejected',diag.rejected);set('dCooldown',Math.max(0,cooldownUntil-Date.now())+' ms');set('dRequestGap','150 ms');set('selectionUpdated',diag.lastUniverse?'Updated '+new Date(diag.lastUniverse).toLocaleTimeString():'Waiting for universe scan');set('dLastUniverse','Last universe refresh: '+(diag.lastUniverse?new Date(diag.lastUniverse).toLocaleTimeString():'—'));
- const s=settings();set('dSelectionRule','Selection: Top '+s.topX+' gainers + Bottom '+s.bottomY+' losers · independent counts · no cap');set('dSelectedSummary',diag.selected+' selected · '+s.workers+' coin workers / '+requestConcurrency+' REST request slots');set('dRejectSummary',diag.rejected+' rejected · Already tracked: '+diag.reasons.alreadyTracked+' · RSI below: '+diag.reasons.rsiBelow+' · Insufficient RSI: '+diag.reasons.insufficientRsi+' · Insufficient MACD: '+diag.reasons.insufficientMacd+' · Errors: '+diag.reasons.errors);set('dSignalSummary',diag.signalRows.length+' selected coins assessed · '+[...state.qualified.keys()].length+' currently monitoring · '+state.alarms.length+' alarms');
- const selected=$('selectedCoins');if(selected){selected.replaceChildren();if(!state.universe.length){const tr=document.createElement('tr'),td=cell('No coins selected yet');td.colSpan=4;tr.append(td);selected.append(tr)}else state.universe.forEach(t=>{const tr=document.createElement('tr');tr.append(cell(t.symbol,'coin'),cell(t.selectionSide),cell((+t.priceChangePercent).toFixed(2)+'%'),cell((+t.quoteVolume).toLocaleString(undefined,{maximumFractionDigits:0})));selected.append(tr)})}
- const rejected=$('rejectedCoins');if(rejected){rejected.replaceChildren();if(!diag.rejections.length){const tr=document.createElement('tr'),td=cell('No rejection details yet');td.colSpan=3;tr.append(td);rejected.append(tr)}else diag.rejections.forEach(x=>{const tr=document.createElement('tr');tr.append(cell(x.symbol,'coin'),cell(x.reason),cell(x.details||'—'));rejected.append(tr)})}
- const signals=$('signalCoins');if(signals){signals.replaceChildren();if(!diag.signalRows.length){const tr=document.createElement('tr'),td=cell('No scan results yet');td.colSpan=7;tr.append(td);signals.append(tr)}else diag.signalRows.forEach(x=>{const tr=document.createElement('tr');tr.append(cell(x.symbol,'coin'),cell(Number.isFinite(x.r3)?x.r3.toFixed(1):'—'),cell(Number.isFinite(x.r5)?x.r5.toFixed(1):'—'),cell(Number.isFinite(x.r15)?x.r15.toFixed(1):'—'),cell(x.trigger||'—'),cell(x.macd||'—'),cell(x.outcome||x.detail||'—'));signals.append(tr)})}
- const audit=$('universeAudit');if(audit&&audit.dataset.renderedAt!==String(diag.lastUniverse)){audit.dataset.renderedAt=String(diag.lastUniverse);audit.replaceChildren();if(!diag.eligibleAudit.length){const tr=document.createElement('tr'),td=cell('No universe audit yet');td.colSpan=6;tr.append(td);audit.append(tr)}else diag.eligibleAudit.forEach(x=>{const tr=document.createElement('tr');tr.append(cell('#'+x.rank),cell(x.symbol,'coin'),cell((x.change>=0?'+':'')+x.change.toFixed(2)+'%'),cell(x.volume.toLocaleString(undefined,{maximumFractionDigits:0})),cell(x.side),cell(x.reason));audit.append(tr)})}
- set('dUniverseAuditSummary',diag.eligibleAudit.length+' eligible contracts · '+diag.selected+' selected · '+(diag.eligibleAudit.length-diag.selected)+' not selected');
+function renderUniverse(universe){
+ $('universeCount').textContent=universe.length;
+ $('universeRows').innerHTML=universe.length?universe.map((item,index)=>'<tr><td>'+(index+1)+'</td><td class="'+(item.change>=0?'positive':'negative')+'">'+(item.change>=0?'GAINER':'LOSER')+'</td><td><b>'+item.symbol+'</b></td><td class="num '+(item.change>=0?'positive':'negative')+'">'+(item.change>=0?'+':'')+fmt(item.change)+'%</td><td>'+fmt(item.volume)+'</td></tr>').join(''):'<tr><td colspan="5" class="muted">No contracts passed the current universe settings.</td></tr>';
 }
-
-function formatMs(ms){return ms==null?'—':ms<1000?Math.round(ms)+' ms':(ms/1000).toFixed(1)+' s'}
-function renderPerformance(){
- const set=(id,v)=>{const el=$(id);if(el)el.textContent=v};const p=perf.latest;
- set('pScanned',p.scanned);set('pSpeed',p.scanned?p.speed.toFixed(2):'—');set('pDuration',p.scanned?formatMs(p.duration):'—');set('pWorkers',perf.activeWorkers+' / '+perf.peakWorkers);set('pQualified',state.qualified.size);set('pLatency',formatMs(perf.lastLatency));set('pRequests',perf.requests);set('pResponse',perf.requests?(perf.responseMs/Math.max(1,perf.requests)).toFixed(0)+' ms':'—');set('pSuccess',perf.success);set('pFailed',perf.failed);set('pRate',perf.rateLimits);set('pCache',perf.cacheHits+' / '+perf.cacheMisses);set('pUniverseTime',p.universeMs?formatMs(p.universeMs):'—');set('pPerCoin',p.scanned?formatMs(p.avgPerCoin):'—');set('pRequestLoad',activeRequests+' / '+perf.peakRequests);set('pLastSuccess','Last successful API response: '+(perf.lastSuccess?new Date(perf.lastSuccess).toLocaleTimeString():'—'));set('pTransport','Data transport: '+(state.ws&&state.ws.readyState===WebSocket.OPEN?'WebSocket connected':'WebSocket waiting'));renderDiagnostics();set('perfUpdated',perf.cycles.length?'Updated '+new Date().toLocaleTimeString():'Waiting for first scan');
- const body=$('perfHistory');if(body){body.replaceChildren();if(!perf.cycles.length){const tr=document.createElement('tr'),td=cell('No scan cycles recorded yet','empty');td.colSpan=5;tr.append(td);body.append(tr)}else perf.cycles.forEach(x=>{const tr=document.createElement('tr');tr.append(cell(new Date(x.time).toLocaleTimeString()),cell(x.scanned),cell(formatMs(x.duration)),cell(x.speed.toFixed(2)),cell(x.failed));body.append(tr)})}
+async function loadUniverse(){
+ if(scanBusy)return;scanBusy=true;stopRequested=false;setRunning(running);cycle++;
+ const started=Date.now();diagnostics.requests=0;diagnostics.peakRequests=0;
+ try{
+  requestConcurrency=Math.max(1,Math.min(20,Math.floor(Number($('workers').value)||8)));
+  setStatus('Loading Binance exchange information and 24H market tickers…');
+  const [info,tickers]=await Promise.all([
+   exchangeInfoCache?Promise.resolve(exchangeInfoCache):getJson(API+'/fapi/v1/exchangeInfo'),
+   getJson(API+'/fapi/v1/ticker/24hr')
+  ]);
+  if(!exchangeInfoCache)exchangeInfoCache=info;
+  if(stopRequested)return;
+  const tickerMap=new Map(tickers.map(t=>[t.symbol,t]));
+  const perpetuals=info.symbols.filter(s=>s.status==='TRADING'&&s.contractType==='PERPETUAL'&&s.quoteAsset==='USDT'&&s.marginAsset==='USDT');
+  const minVolume=Math.max(0,Number($('volume').value)||0);
+  const eligible=perpetuals.map(contract=>{const ticker=tickerMap.get(contract.symbol);return ticker?{symbol:contract.symbol,volume:Number(ticker.quoteVolume)||0,change:Number(ticker.priceChangePercent)||0}:null}).filter(item=>item&&Number.isFinite(item.change)&&item.volume>=minVolume);
+  const ranked=[...eligible].sort((a,b)=>b.change-a.change);
+  const readCount=id=>{const raw=$(id).value.trim();if(raw==='')return 0;const value=Number(raw);return Number.isFinite(value)?Math.max(0,Math.floor(value)):0};
+  const top=ranked.slice(0,Math.min(readCount('topCount'),ranked.length));
+  const bottom=ranked.slice(Math.max(0,ranked.length-Math.min(readCount('bottomCount'),ranked.length)));
+  const selectedMap=new Map();top.forEach(item=>selectedMap.set(item.symbol,item));
+  const beforeBottom=selectedMap.size;bottom.forEach(item=>{if(!selectedMap.has(item.symbol))selectedMap.set(item.symbol,item)});
+  const overlap=top.length+bottom.length-selectedMap.size;
+  const universe=[...selectedMap.values()].sort((a,b)=>a.change-b.change);
+  $('eligible').textContent=eligible.length;$('selected').textContent=universe.length;$('eligibleCount').textContent=eligible.length;
+  $('universeRule').textContent='Top '+top.length+' / Bottom '+bottom.length+' · 24H price change';
+  $('volumeRule').textContent=fmt(minVolume)+' USDT';renderUniverse(universe);
+  const duration=(Date.now()-started)/1000;
+  $('last').textContent=new Date().toLocaleTimeString();
+  $('dContracts').textContent=fmt(info.symbols.length);$('dPerpetuals').textContent=fmt(perpetuals.length);
+  $('dVolume').textContent=fmt(eligible.length);$('dGainers').textContent=fmt(top.length);$('dLosers').textContent=fmt(bottom.length);
+  $('dOverlap').textContent=fmt(overlap);$('dRequests').textContent=String(diagnostics.requests);$('dDuration').textContent=duration.toFixed(2)+'s';
+  $('diagStatus').textContent='Universe cycle '+cycle+' completed · '+universe.length+' selected from '+eligible.length+' eligible contracts · peak concurrent REST requests: '+diagnostics.peakRequests+'.';
+  setStatus('Universe loaded: '+universe.length+' selected coins from '+eligible.length+' eligible USDT perpetuals.');
+ }catch(error){setStatus(error.message||'Universe load failed.',true);$('diagStatus').textContent='Universe load failed: '+(error.message||'Unknown error')}
+ finally{
+  scanBusy=false;
+  if(running&&!stopRequested){
+   const mode=$('refresh').value;
+   if(mode==='continuous')loopTimer=setTimeout(loadUniverse,0);
+   else if(Number(mode)>0)loopTimer=setTimeout(loadUniverse,Math.max(Number(mode)*1000,rateLimitUntil-Date.now(),0));
+   else{running=false;setRunning(false)}
+  }else if(!running)setRunning(false);
+ }
 }
-
-function cell(v,cls=''){const td=document.createElement('td');td.textContent=v; if(cls)td.className=cls;return td}
-function render(){
- const q=$('qualified'),a=$('alarms');q.replaceChildren();a.replaceChildren();
- const qs=[...state.qualified.values()].sort((x,y)=>y.qualifiedAt-x.qualifiedAt);
- if(!qs.length){const tr=document.createElement('tr');const td=cell('No qualified coins yet','empty');td.colSpan=5;tr.append(td);q.append(tr)}
- qs.forEach(x=>{const tr=document.createElement('tr');tr.append(cell(x.symbol,'coin'),cell(x.tf),cell(x.rsi.toFixed(1)),cell(x.displayColor==='green'?'GREEN':'RED',x.displayColor),cell(new Date(x.qualifiedAt).toLocaleTimeString()));q.append(tr)});
- if(!state.alarms.length){const tr=document.createElement('tr');const td=cell('No alarms yet','empty');td.colSpan=5;tr.append(td);a.append(tr)}
- state.alarms.forEach(x=>{const tr=document.createElement('tr');tr.className='alarmrow';tr.append(cell(x.symbol,'coin'),cell(x.tf),cell(x.rsi.toFixed(1)),cell('GREEN → RED','red'),cell(new Date(x.alarmAt).toLocaleTimeString()));a.append(tr)});
- $('qualifiedCount').textContent=qs.length+' monitoring';$('alarmCount').textContent=state.alarms.length+' alarms';renderPerformance();
-}
-async function runScanLoop(){while(state.running){await scan();if(!state.running)break;const mode=settings().refresh;if(mode==='off')break;if(mode==='continuous')continue;await sleep(Number(mode)*1000)}}
-function start(){if(state.running)return;state.running=true;$('start').disabled=true;$('stop').disabled=false;setStatus('Starting…');connectWebSocket();runScanLoop();log('Monitoring started. Universe refresh: '+settings().refresh+'. RSI workers: '+settings().workers+'. 1M MACD: Binance WebSocket.')}
-function stop(){state.running=false;clearTimeout(state.timer);closeCandleStreams();closeWebSocket();$('start').disabled=false;$('stop').disabled=true;setStatus('Stopped',false);log('Monitoring stopped. Existing qualified coins and alarms are retained.')}
-function save(){localStorage.setItem('rsiMacdReversalSettings',JSON.stringify(settings()));log('Settings saved on this device.')}
-function load(){try{const s=JSON.parse(localStorage.getItem('rsiMacdReversalSettings')||'null');if(s){$('rsiPeriod').value=s.period??14;$('rsi3').value=s.r3??70;$('rsi5').value=s.r5??70;$('rsi15').value=s.r15??70;$('minVolume').value=s.volume??2000000;$('topX').value=s.topX??(s.universeValue??10);$('bottomY').value=s.bottomY??(s.universeValue??10);if(s.workers)$('workers').value=s.workers;if(s.refresh)$('refreshRate').value=s.refresh}}catch(e){}}
-$('workers').addEventListener('input',renderDiagnostics);$('topX').addEventListener('input',renderDiagnostics);$('bottomY').addEventListener('input',renderDiagnostics);$('minVolume').addEventListener('input',renderDiagnostics);$('start').addEventListener('click',start);$('stop').addEventListener('click',stop);$('once').addEventListener('click',scan);$('save').addEventListener('click',save);$('clear').addEventListener('click',()=>{state.alarms=[];render();log('Alarm history cleared.')});load();render();renderPerformance();renderDiagnostics();
+$('start').addEventListener('click',()=>{if(running)return;running=true;stopRequested=false;clearTimeout(loopTimer);setRunning(true);loadUniverse()});
+$('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}stopRequested=false;loadUniverse()});
+$('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
+$('save').addEventListener('click',saveSettings);
+$('refresh').addEventListener('change',()=>{if(running&&!scanBusy){clearTimeout(loopTimer);if($('refresh').value==='0'){running=false;setRunning(false)}else loopTimer=setTimeout(loadUniverse,$('refresh').value==='continuous'?0:Number($('refresh').value)*1000)}});
+loadSettings();
 })();
 </script>
 </body></html>
