@@ -522,7 +522,7 @@ async function syncRsiWebSockets(universe){
   if(!RSI_INTERVALS.includes(job.interval))return {qualified:false};
   const rsiCloses=allCloses.slice(-(RSI_PERIOD+required+12));
   rsiCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:rsiCloses,lastClosedTime});
-  return {qualified:evaluateClosedRsi(job.coin.symbol,job.interval,lastClosedTime)};
+  return {qualified:false}; // Defer RSI qualification until every timeframe, including 1m MACD, has finished seeding.
  });
  // Reconcile every selected coin only after all three timeframe histories have been seeded.
  // This makes the outcome box reflect the same complete data set as the full-universe RSI overview.
