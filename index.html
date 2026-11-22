@@ -34,7 +34,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
    <div><label for="bottomY">Bottom Y losers</label><input id="bottomY" type="number" min="0" max="500" step="1" value="10"></div>
    <div><label for="minVolume">Min 24H quote volume (USDT)</label><input id="minVolume" type="number" min="0" step="100000" value="2000000"></div>
    <div><label for="workers">Workers (max 20)</label><input id="workers" type="number" min="1" max="20" value="8"></div>
-   <div><label for="refreshRate">Universe refresh</label><select id="refreshRate"><option value="off">Off</option><option value="10">10 seconds</option><option value="30">30 seconds</option><option value="60">60 seconds</option><option value="continuous" selected>Continuous</option></select></div>
+   <div><label for="refreshRate">Universe refresh</label><select id="refreshRate"><option value="30">30 seconds</option><option value="60">60 seconds</option><option value="continuous" selected>Continuous</option></select></div>
   </div>
   <div class="actions"><button id="start" class="primary">Start monitoring</button><button id="once">Scan once</button><button id="stop" disabled>Stop</button><button id="save">Save settings</button><button id="clear">Clear alarms</button></div>
   <div class="footer">A coin qualifies when ANY one of its 3M, 5M or 15M closed-candle RSI values reaches its own threshold. Qualification is latched until the 1M MACD alarm fires.</div>
