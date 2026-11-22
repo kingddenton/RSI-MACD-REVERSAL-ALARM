@@ -272,7 +272,7 @@ function sendRsiSubscription(method,streams){
 }
 function connectRsiSocket(){
  if(rsiSocket&&[WebSocket.CONNECTING,WebSocket.OPEN].includes(rsiSocket.readyState))return;
- clearTimeout(rsiReconnectTimer);rsiSocket=new WebSocket('wss://fstream.binance.com/ws');
+ clearTimeout(rsiReconnectTimer);rsiSocket=new WebSocket('wss://fstream.binance.com/market/ws');
  rsiSocket.onopen=()=>{rsiSocketConnected=true;rsiWsAcked.clear();const streams=[...rsiSocketWanted];for(let i=0;i<streams.length;i+=100)sendRsiSubscription('SUBSCRIBE',streams.slice(i,i+100));setStatus('RSI WebSocket connected · monitoring '+rsiSocketWanted.size+' candle streams.')};
  rsiSocket.onmessage=handleRsiSocketMessage;
  rsiSocket.onerror=()=>{$('perfStatus').textContent='RSI WebSocket connection error; reconnecting…'};
@@ -440,7 +440,7 @@ $('btcWsTest').addEventListener('click',()=>{
  stopBtcWsTest();btcWsTestCount=0;$('btcWsLog').innerHTML='';
  $('btcWsTest').disabled=true;$('btcWsStop').disabled=false;
  const streams=['btcusdt@kline_3m','btcusdt@kline_5m','btcusdt@kline_15m'];
- const socket=new WebSocket('wss://fstream.binance.com/ws');btcWsTestSocket=socket;
+ const socket=new WebSocket('wss://fstream.binance.com/market/ws');btcWsTestSocket=socket;
  $('btcWsStatus').textContent='Connecting to Binance Futures…';
  socket.onopen=()=>{logBtcWsTest('SOCKET OPEN','Sending subscriptions for BTCUSDT 3m, 5m, 15m');socket.send(JSON.stringify({method:'SUBSCRIBE',params:streams,id:987654}))};
  socket.onmessage=event=>{
