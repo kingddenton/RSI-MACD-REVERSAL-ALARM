@@ -244,27 +244,36 @@ function emaSeries(values,period){
  for(let i=period;i<values.length;i++){ema=values[i]*k+ema*(1-k);out[i]=ema}
  return out;
 }
+// Exact MACD implementation from the proven MACD-CROSSOVER scanner.
+function legacyEma(values,period){
+ const multiplier=2/(period+1),result=[];
+ if(!values.length)return result;
+ let previous=values[0];result.push(previous);
+ for(let i=1;i<values.length;i++){
+  previous=values[i]*multiplier+previous*(1-multiplier);
+  result.push(previous);
+ }
+ return result;
+}
 function calculateMacdHistogramSeries(closes){
- const fast=emaSeries(closes,12),slow=emaSeries(closes,26),dif=[];
- for(let i=0;i<closes.length;i++)if(Number.isFinite(fast[i])&&Number.isFinite(slow[i]))dif[i]=fast[i]-slow[i];
- const valid=dif.filter(Number.isFinite),dea=emaSeries(valid,9),hist=[];
- let j=0;
- for(let i=0;i<dif.length;i++)if(Number.isFinite(dif[i])){if(Number.isFinite(dea[j]))hist[i]=dif[i]-dea[j];j++;}
- return hist;
+ const fast=legacyEma(closes,12),slow=legacyEma(closes,26);
+ const dif=closes.map((v,i)=>fast[i]-slow[i]);
+ const dea=legacyEma(dif,9);
+ return dif.map((v,i)=>v-dea[i]);
 }
 function findRecentMacdCross(hist,direction){
- for(let i=hist.length-1;i>=1;i--){
-  if(direction==='bear'&&hist[i]<0&&hist[i-1]>=0)return {index:i,bar:hist.length-i};
-  if(direction==='bull'&&hist[i]>0&&hist[i-1]<=0)return {index:i,bar:hist.length-i};
+ const last=hist.length-1;
+ for(let i=last;i>=1;i--){
+  if(direction==='bear'&&hist[i]<0&&hist[i-1]>=0)return {index:i,bar:last-i+1};
+  if(direction==='bull'&&hist[i]>0&&hist[i-1]<=0)return {index:i,bar:last-i+1};
  }
  return null;
 }
 function calculateMacdDiagnostic(closes){
- const fast=emaSeries(closes,12),slow=emaSeries(closes,26),dif=[];
- for(let i=0;i<closes.length;i++)if(Number.isFinite(fast[i])&&Number.isFinite(slow[i]))dif[i]=fast[i]-slow[i];
- const valid=dif.filter(Number.isFinite),deaValid=emaSeries(valid,9);
- if(!valid.length||!Number.isFinite(deaValid[deaValid.length-1]))return null;
- const d=dif.filter(Number.isFinite).at(-1),e=deaValid.at(-1),h=d-e;
+ if(!closes||closes.length<2)return null;
+ const fast=legacyEma(closes,12),slow=legacyEma(closes,26);
+ const dif=closes.map((v,i)=>fast[i]-slow[i]),dea=legacyEma(dif,9);
+ const i=closes.length-1,d=dif[i],e=dea[i],h=d-e;
  return {dif:d,dea:e,hist:h,position:d>=e?'DIF ABOVE DEA':'DIF BELOW DEA'};
 }
 function updateMacdDiagnostic(symbol,shouldRender=true){
