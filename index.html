@@ -272,7 +272,7 @@ function calculateMacdDiagnostic(closes){
  const d=dif.filter(Number.isFinite).at(-1),e=deaValid.at(-1),h=d-e;
  return {dif:d,dea:e,hist:h,position:d>=e?'DIF ABOVE DEA':'DIF BELOW DEA'};
 }
-function updateMacdDiagnostic(symbol){
+function updateMacdDiagnostic(symbol,shouldRender=true){
  const values={};
  for(const tf of MACD_DIAGNOSTIC_INTERVALS){
   const history=macdCandleHistory.get(rsiHistoryKey(symbol,tf));
@@ -280,7 +280,7 @@ function updateMacdDiagnostic(symbol){
   values[tf]={macd,lastClosedTime:history?history.lastClosedTime:null,closes:history?history.closes.length:0};
  }
  macdDiagnosticRows.set(symbol,values);
- renderMacdDiagnostics();
+ if(shouldRender)renderMacdDiagnostics();
 }
 function renderMacdDiagnostics(){
  const symbols=[...new Set([...rsiOverviewSymbols,...MACD_DIAGNOSTIC_WATCHLIST])];
@@ -512,11 +512,12 @@ async function syncRsiWebSockets(universe){
  // Reconcile every selected coin only after all three timeframe histories have been seeded.
  // This makes the outcome box reflect the same complete data set as the full-universe RSI overview.
  for(const coin of universe){
-  updateMacdDiagnostic(coin.symbol);
+  updateMacdDiagnostic(coin.symbol,false);
   rsiLastEvaluated.delete(String(coin.symbol).toUpperCase()+'|ANY');
   evaluateAllTimeframeRsi(coin.symbol);
   updateMacdDiagnostic(coin.symbol);
  }
+ renderMacdDiagnostics();
  renderRsiOverview();
  const failures=seeded.output.filter(x=>x&&x.error);
  rsiCycleSeeded=seeded.done;rsiCycleErrors=failures.length;
