@@ -32,7 +32,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
   <div class="field"><label for="bottomCount">BOTTOM LOSERS · Y</label><input id="bottomCount" type="number" min="0" step="1" value="10"></div>
   <div class="field"><label for="volume">MIN 24H QUOTE VOLUME (USDT)</label><input id="volume" type="number" min="0" step="100000" value="2000000"></div>
   <div class="field"><label for="workers">CONCURRENT WORKERS</label><input id="workers" type="number" min="1" max="20" value="8"></div>
-  <div class="field"><label for="refresh">AUTO REFRESH</label><select id="refresh"><option value="0">Off</option><option value="30">Every 30 seconds</option><option value="60" selected>Every 60 seconds</option><option value="120">Every 2 minutes</option><option value="continuous">Continuous · immediately after scan</option></select></div>
+  <div class="field"><label for="refresh">AUTO REFRESH</label><select id="refresh"><option value="0">Off</option><option value="10">Every 10 seconds</option><option value="30">Every 30 seconds</option><option value="60" selected>Every 60 seconds</option><option value="120">Every 2 minutes</option><option value="continuous">Continuous · immediately after scan</option></select></div>
  </div>
  <div class="actions"><button id="start">Start scanning</button><button id="once" class="secondary">Scan universe once</button><button id="stop" class="stop">Stop</button><button id="save" class="secondary">Save settings</button></div>
  <div class="status" id="status">Ready. This first stage loads and displays the selected market universe only.</div>
