@@ -191,8 +191,8 @@ function calculateRsiSeries(closes,period=RSI_PERIOD){
 }
 const rsiCandleHistory=new Map();
 let rsiSocket=null,rsiSocketConnected=false,rsiSocketWanted=new Set(),rsiReconnectTimer=null,rsiWsMessageId=1;
-const rsiWsPending=new Map();
-let rsiWsAckStreams=0,rsiWsAckErrors=0,rsiWsMessages=0,rsiWsLastMessage='Never',rsiWsLastEvent='None',rsiCycleSeeded=0,rsiCycleErrors=0;
+const rsiWsPending=new Map(),rsiWsAcked=new Set();
+let rsiWsAckErrors=0,rsiWsMessages=0,rsiWsKlineMessages=0,rsiWsClosedCandles=0,rsiWsLastMessage='Never',rsiWsLastEvent='None',rsiCycleSeeded=0,rsiCycleErrors=0;
 function rsiStreamName(symbol,interval){return symbol.toLowerCase()+'@kline_'+interval}
 function rsiHistoryKey(symbol,interval){return symbol+'|'+interval}
 function evaluateAllTimeframeRsi(symbol){
@@ -226,8 +226,10 @@ function renderRsiDiagnostics(){
  if(!stats)return;
  stats.innerHTML=
  '<span>Cached RSI histories: <b>'+rsiCandleHistory.size+' / '+rsiSocketWanted.size+'</b></span>'+
- '<span>Subscription ACK streams: <b>'+rsiWsAckStreams+' / '+rsiSocketWanted.size+'</b></span>'+
- '<span>Live WebSocket messages: <b>'+rsiWsMessages+'</b></span>'+
+ '<span>Unique ACK streams: <b>'+rsiWsAcked.size+' / '+rsiSocketWanted.size+'</b></span>'+
+ '<span>WebSocket messages: <b>'+rsiWsMessages+'</b></span>'+
+ '<span>Kline updates: <b>'+rsiWsKlineMessages+'</b></span>'+
+ '<span>Closed candles: <b>'+rsiWsClosedCandles+'</b></span>'+
  '<span>Last message: <b>'+rsiWsLastMessage+'</b></span>'+
  '<span>Last event: <b>'+rsiWsLastEvent+'</b></span>'+
  '<span>Current-cycle seed errors: <b>'+rsiCycleErrors+'</b></span>'+
@@ -237,20 +239,21 @@ function renderRsiDiagnostics(){
 }
 function handleRsiSocketMessage(event){
  let msg;try{msg=JSON.parse(event.data)}catch(e){return}
+ if(msg&&msg.data)msg=msg.data;
  rsiWsMessages++;rsiWsLastMessage=new Date().toLocaleTimeString();
  if(msg&&Object.prototype.hasOwnProperty.call(msg,'id')){
   const pending=rsiWsPending.get(msg.id);
-  if(pending){rsiWsPending.delete(msg.id);if(msg.error)rsiWsAckErrors+=pending.streams.length;else rsiWsAckStreams+=pending.streams.length;rsiWsLastEvent=msg.error?'SUBSCRIPTION ERROR':'SUBSCRIPTION ACK';}
+  if(pending){rsiWsPending.delete(msg.id);if(msg.error)rsiWsAckErrors+=pending.streams.length;else pending.streams.forEach(stream=>rsiWsAcked.add(stream));rsiWsLastEvent=msg.error?'SUBSCRIPTION ERROR':'SUBSCRIPTION ACK';}
   renderRsiDiagnostics();return;
  }
  const k=msg&&msg.k;
  if(!k){rsiWsLastEvent=msg&&msg.e?String(msg.e):'CONTROL / OTHER';renderRsiDiagnostics();return}
- rsiWsLastEvent='KLINE '+k.i+(k.x?' CLOSED':' OPEN');
+ rsiWsKlineMessages++;rsiWsLastEvent='KLINE '+k.i+(k.x?' CLOSED':' OPEN');
  if(!k.x){renderRsiDiagnostics();return}
  const symbol=String(k.s||'').toUpperCase(),interval=k.i,key=rsiHistoryKey(symbol,interval),history=rsiCandleHistory.get(key);
  if(!history){renderRsiDiagnostics();return}
  const closeTime=Number(k.T);if(closeTime<=history.lastClosedTime){renderRsiDiagnostics();return}
- history.closes.push(Number(k.c));if(history.closes.length>120)history.closes.shift();
+ rsiWsClosedCandles++;history.closes.push(Number(k.c));if(history.closes.length>120)history.closes.shift();
  history.lastClosedTime=closeTime;rsiScanStats.checked++;
  evaluateClosedRsi(symbol,interval,closeTime);
  renderRsiDiagnostics();
@@ -264,7 +267,7 @@ function sendRsiSubscription(method,streams){
 function connectRsiSocket(){
  if(rsiSocket&&[WebSocket.CONNECTING,WebSocket.OPEN].includes(rsiSocket.readyState))return;
  clearTimeout(rsiReconnectTimer);rsiSocket=new WebSocket('wss://fstream.binance.com/ws');
- rsiSocket.onopen=()=>{rsiSocketConnected=true;const streams=[...rsiSocketWanted];for(let i=0;i<streams.length;i+=100)sendRsiSubscription('SUBSCRIBE',streams.slice(i,i+100));setStatus('RSI WebSocket connected · monitoring '+rsiSocketWanted.size+' candle streams.')};
+ rsiSocket.onopen=()=>{rsiSocketConnected=true;rsiWsAcked.clear();const streams=[...rsiSocketWanted];for(let i=0;i<streams.length;i+=100)sendRsiSubscription('SUBSCRIBE',streams.slice(i,i+100));setStatus('RSI WebSocket connected · monitoring '+rsiSocketWanted.size+' candle streams.')};
  rsiSocket.onmessage=handleRsiSocketMessage;
  rsiSocket.onerror=()=>{$('perfStatus').textContent='RSI WebSocket connection error; reconnecting…'};
  rsiSocket.onclose=()=>{rsiSocketConnected=false;rsiSocket=null;if(rsiSocketWanted.size&&!stopRequested)rsiReconnectTimer=setTimeout(connectRsiSocket,5000)};
@@ -272,6 +275,9 @@ function connectRsiSocket(){
 async function syncRsiWebSockets(universe){
  const symbols=new Set(universe.map(x=>x.symbol)),wanted=new Set([...symbols].flatMap(s=>RSI_INTERVALS.map(i=>rsiStreamName(s,i))));
  const removed=[...rsiSocketWanted].filter(x=>!wanted.has(x)),added=[...wanted].filter(x=>!rsiSocketWanted.has(x));
+ const activeHistoryKeys=new Set(universe.flatMap(coin=>RSI_INTERVALS.map(interval=>rsiHistoryKey(coin.symbol,interval))));
+ for(const key of rsiCandleHistory.keys())if(!activeHistoryKeys.has(key))rsiCandleHistory.delete(key);
+ for(const stream of [...rsiWsAcked])if(!wanted.has(stream))rsiWsAcked.delete(stream);
  rsiSocketWanted=wanted;
  if(rsiSocketConnected){for(let i=0;i<removed.length;i+=100)sendRsiSubscription('UNSUBSCRIBE',removed.slice(i,i+100));for(let i=0;i<added.length;i+=100)sendRsiSubscription('SUBSCRIBE',added.slice(i,i+100))}
  else if(wanted.size)connectRsiSocket();
