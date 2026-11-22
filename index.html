@@ -170,9 +170,9 @@ function renderOutcomeBox(key){
     :['3m','5m','15m'].filter(tf=>Number.isFinite(Number(values[tf]))&&Number(values[tf])>=Number(details.threshold||$('rsiThreshold').value||70));
    const rsiText=qualifying.map(tf=>tf+' '+Number(values[tf]).toFixed(2)).join('  |  ');
    const macdHistory=macdCandleHistory.get(rsiHistoryKey(item.symbol,MACD_ALERT_INTERVAL));
-   const macd=macdHistory?calculateMacdDiagnostic(macdHistory.closes):null;
+   const macd=item.liveMacd||(macdHistory?calculateMacdDiagnostic(macdHistory.closes):null);
    const macdClass=macd?(macd.hist>=0?'positive':'negative'):'muted';
-   const macdText=macd?'1m DIF '+macd.dif.toExponential(2)+' · DEA '+macd.dea.toExponential(2)+' · H '+macd.hist.toExponential(2):'1m MACD waiting';
+   const macdText=macd?'LIVE 1m DIF '+macd.dif.toExponential(2)+' · DEA '+macd.dea.toExponential(2)+' · H '+macd.hist.toExponential(2):'1m MACD waiting';
    const entryNumber=String(items.length-items.indexOf(item)).padStart(2,'0');
    return '<div class="outcome-item qualified-item"><span class="outcome-index">'+entryNumber+'</span><span class="outcome-symbol">'+item.symbol+'</span><span class="outcome-rsi">'+(rsiText||'RSI qualification recorded')+'</span><span class="outcome-macd-value '+macdClass+'" title="1-minute MACD · DIF / DEA / Histogram">'+macdText+'</span></div>';
   }
@@ -411,8 +411,21 @@ function handleRsiSocketMessage(event){
  const k=msg&&msg.k;
  if(!k){rsiWsLastEvent=msg&&msg.e?String(msg.e):'CONTROL / OTHER';renderRsiDiagnostics();return}
  rsiWsKlineMessages++;rsiWsLastEvent='KLINE '+k.i+(k.x?' CLOSED':' OPEN');
- if(!k.x){renderRsiDiagnostics();return}
- const symbol=String(k.s||'').toUpperCase(),interval=k.i,key=rsiHistoryKey(symbol,interval),history=rsiCandleHistory.get(key),macdHistory=macdCandleHistory.get(key);
+ const symbol=String(k.s||'').toUpperCase(),interval=k.i,key=rsiHistoryKey(symbol,interval);
+ if(!k.x){
+  if(interval===MACD_ALERT_INTERVAL&&qualifiedMacdWatchlist.has(symbol)){
+   const liveHistory=macdCandleHistory.get(key);
+   if(liveHistory&&Number.isFinite(Number(k.c))){
+    const liveCloses=liveHistory.closes.concat(Number(k.c));
+    const liveMacd=calculateMacdDiagnostic(liveCloses);
+    const row=outcomeState.qualified.get(symbol);
+    if(row){row.liveMacd=liveMacd;row.liveMacdTime=Number(k.T)||Date.now();}
+    renderOutcomeBox('qualified');
+   }
+  }
+  renderRsiDiagnostics();return;
+ }
+ const history=rsiCandleHistory.get(key),macdHistory=macdCandleHistory.get(key);
  if(interval===MACD_ALERT_INTERVAL){
   const closeTime=Number(k.T),isQualified=qualifiedMacdWatchlist.has(symbol);
   const priorCloseTime=macdHistory?Number(macdHistory.lastClosedTime)||null:null;
