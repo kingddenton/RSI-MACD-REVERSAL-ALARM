@@ -50,7 +50,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
    <article class="outcome-card outcome-ema"><div class="outcome-head"><span>EMA BEARISH</span><span class="outcome-count" id="emaBearishCount">0</span></div><div class="outcome-list" id="emaBearishList"><div class="outcome-empty">No EMA bearish outcomes yet</div></div></article>
   </div>
  </div>
- <p class="note">The four boxes are displayed in one horizontal row. A coin leaves Qualified / Monitoring when its first outcome is triggered, and may appear in multiple outcome boxes. Signal engines are not connected yet.</p>
+ <p class="note">The four boxes are displayed in one horizontal row. A coin leaves Qualified / Monitoring when its first outcome is triggered, and may appear in multiple outcome boxes. Live RSI contraction qualification is connected. MACD, Supertrend and EMA outcome engines remain inactive.</p>
 </section>
 
 <details class="panel monitor-panel" id="diagnostics" open>
@@ -71,17 +71,17 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 
 <details class="panel monitor-panel" id="performancePanel" open>
  <summary style="cursor:pointer;font-size:15px;font-weight:750;list-style:none">PERFORMANCE MONITOR</summary>
- <p class="note">Infrastructure measurements. Coin-job, candle-cache and signal timings activate when the coin-scanning engine is added.</p>
+ <p class="note">Infrastructure measurements. RSI candle requests are now included in each universe cycle.</p>
  <div class="perf-grid">
   <div class="perf-metric"><span>Universe load duration</span><strong id="perfDuration">—</strong></div>
   <div class="perf-metric"><span>Average universe load</span><strong id="perfAverage">—</strong></div>
   <div class="perf-metric"><span>REST requests this cycle</span><strong id="perfRequests">—</strong></div>
   <div class="perf-metric"><span>Peak concurrent REST</span><strong id="perfPeakRequests">—</strong></div>
   <div class="perf-metric"><span>Configured workers</span><strong id="perfWorkerLimit">8</strong></div>
-  <div class="perf-metric"><span>Active coin workers</span><strong id="perfActiveWorkers">Not active yet</strong></div>
-  <div class="perf-metric"><span>Queued / started jobs</span><strong id="perfJobs">Not active yet</strong></div>
-  <div class="perf-metric"><span>Completed / failed jobs</span><strong id="perfJobResults">Not active yet</strong></div>
-  <div class="perf-metric"><span>Candle cache hits / misses</span><strong id="perfCache">Not active yet</strong></div>
+  <div class="perf-metric"><span>Active RSI workers</span><strong id="perfActiveWorkers">0</strong></div>
+  <div class="perf-metric"><span>RSI jobs checked</span><strong id="perfJobs">0</strong></div>
+  <div class="perf-metric"><span>RSI qualifications / errors</span><strong id="perfJobResults">0 / 0</strong></div>
+  <div class="perf-metric"><span>RSI timeframes</span><strong id="perfCache">3m · 5m · 15m</strong></div>
   <div class="perf-metric"><span>Rate-limit cooldown</span><strong id="perfCooldown">Clear</strong></div>
   <div class="perf-metric"><span>REST request errors</span><strong id="perfErrors">0</strong></div>
   <div class="perf-metric"><span>Universe refresh cycles</span><strong id="perfCycles">0</strong></div>
@@ -97,9 +97,9 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 </details>
 <details class="panel monitor-panel" id="signalDiagnostics">
  <summary style="cursor:pointer;font-size:15px;font-weight:750;list-style:none">SIGNAL / QUALIFICATION DIAGNOSTICS</summary>
- <p class="note">Reserved for this scanner's RSI qualification and 1M MACD green-to-red transition diagnostics. No signal logic is included in this shell.</p>
+ <p class="note">Live RSI(14) contraction qualification on closed 3m, 5m and 15m candles. A coin qualifies when any monitored timeframe meets the editable contraction count.</p>
  <div class="stats"><span>Qualified coins: <b>Not active yet</b></span><span>Rejected coins: <b>Not active yet</b></span><span>Alarm transitions: <b>Not active yet</b></span></div>
- <div class="wrap" style="margin-top:10px"><table><thead><tr><th>Symbol</th><th>Stage</th><th>Timeframe</th><th>Observed value</th><th>Decision / reason</th></tr></thead><tbody><tr><td colspan="5" class="muted">Signal diagnostics will populate when the RSI / MACD engine is added.</td></tr></tbody></table></div>
+ <div class="wrap" style="margin-top:10px"><table><thead><tr><th>Symbol</th><th>Stage</th><th>Timeframe</th><th>Observed value</th><th>Decision / reason</th></tr></thead><tbody><tr><td colspan="5" class="muted">Waiting for the first live RSI scan.</td></tr></tbody></table></div>
 </details>
 
 <section class="panel">
@@ -167,6 +167,53 @@ function clearOutcomeBoxes(){
 window.ScannerOutcomeBoxes={qualify:qualifyCoin,evaluateRsiContraction,trigger:triggerCoinOutcome,clear:clearOutcomeBoxes,render:renderOutcomeBoxes};
 
 let averageUniverseSeconds=0;
+const RSI_INTERVALS=['3m','5m','15m'], RSI_PERIOD=14, rsiLastEvaluated=new Map();
+let rsiScanStats={checked:0,qualified:0,errors:0};
+function calculateRsiSeries(closes,period=RSI_PERIOD){
+ const out=[]; if(closes.length<=period)return out;
+ let gains=0,losses=0;
+ for(let i=1;i<=period;i++){const d=closes[i]-closes[i-1];if(d>0)gains+=d;else loss-=d}
+ let avgGain=gains/period,avgLoss=loss/period;
+ const value=()=>avgLoss===0?100:100-(100/(1+avgGain/avgLoss));
+ out.push(value());
+ for(let i=period+1;i<closes.length;i++){
+  const d=closes[i]-closes[i-1],gain=Math.max(0,d),loss=Math.max(0,-d);
+  avgGain=((avgGain*(period-1))+gain)/period;
+  avgLoss=((avgLoss*(period-1))+loss)/period;
+  out.push(value());
+ }
+ return out;
+}
+async function scanRsiContractions(universe){
+ const required=Math.max(1,Math.min(20,Math.floor(Number($('rsiContractions').value)||3)));
+ const jobs=universe.flatMap(coin=>RSI_INTERVALS.map(interval=>({coin,interval})));
+ rsiScanStats={checked:0,qualified:0,errors:0};
+ const result=await mapLimit(jobs,requestConcurrency,async job=>{
+  const data=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(job.coin.symbol)+'&interval='+job.interval+'&limit='+(RSI_PERIOD+required+12));
+  const now=Date.now();
+  const closed=data.filter(k=>Number(k[6])<now);
+  const closes=closed.map(k=>Number(k[4]));
+  const values=calculateRsiSeries(closes);
+  if(values.length<required+1)return {qualified:false};
+  const latestClosed=Number(closed[closed.length-1][6]);
+  const key=job.coin.symbol+'|'+job.interval;
+  const signature=String(latestClosed);
+  if(rsiLastEvaluated.get(key)===signature)return {qualified:false,alreadyEvaluated:true};
+  rsiLastEvaluated.set(key,signature);
+  const recent=values.slice(-(required+1));
+  const qualified=recent.slice(1).every((v,i)=>v<recent[i]);
+  if(qualified){
+   qualifyCoin(job.coin.symbol,{reason:'RSI contracting',timeframe:job.interval,rsiPeriod:RSI_PERIOD,consecutiveContractions:required,rsiValues:recent,closedCandleTime:new Date(latestClosed).toISOString()});
+   return {qualified:true,symbol:job.coin.symbol,interval:job.interval,values:recent};
+  }
+  return {qualified:false};
+ });
+ for(const item of result.output){if(item&&item.error)rsiScanStats.errors++;else if(item&&item.qualified){rsiScanStats.qualified++;}}
+ rsiScanStats.checked=result.done;
+ $('signalDiagnostics').querySelector('.note').textContent='Live RSI(14) qualification is active on closed 3m, 5m and 15m candles. A coin qualifies when any one timeframe has the required consecutive RSI declines.';
+ const signalStats=$('signalDiagnostics').querySelector('.stats');
+ if(signalStats)signalStats.innerHTML='<span>RSI checks: <b>'+rsiScanStats.checked+'</b></span><span>New qualifications: <b>'+rsiScanStats.qualified+'</b></span><span>Request errors: <b>'+rsiScanStats.errors+'</b></span><span>Rule: <b>'+required+' consecutive declines</b></span>';
+}
 const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
 function setStatus(message,error=false){$('status').textContent=message;$('status').className='status'+(error?' negative':'')}
 function setRunning(active){$('start').classList.toggle('running',active);$('start').textContent=active?'Scanning…':'Start scanning'}
@@ -225,6 +272,8 @@ async function loadUniverse(){
   const beforeBottom=selectedMap.size;bottom.forEach(item=>{if(!selectedMap.has(item.symbol))selectedMap.set(item.symbol,item)});
   const overlap=top.length+bottom.length-selectedMap.size;
   const universe=[...selectedMap.values()].sort((a,b)=>a.change-b.change);
+  await scanRsiContractions([...selectedMap.values()]);
+  if(stopRequested)return;
   const topSet=new Set(top.map(x=>x.symbol)),bottomSet=new Set(bottom.map(x=>x.symbol));
   const audit=ranked.map((item,index)=>{const isTop=topSet.has(item.symbol),isBottom=bottomSet.has(item.symbol);return {...item,rank:index+1,selected:isTop||isBottom,reason:isTop&&isBottom?'Included in both selections':isTop?'Within Top X gainers':isBottom?'Within Bottom Y losers':'Outside Top X and Bottom Y'}});
   $('eligible').textContent=eligible.length;$('selected').textContent=universe.length;$('eligibleCount').textContent=eligible.length;
@@ -247,7 +296,7 @@ async function loadUniverse(){
   $('perfRequests').textContent=String(diagnostics.requests);$('perfPeakRequests').textContent=String(diagnostics.peakRequests);
   $('perfWorkerLimit').textContent=String(requestConcurrency);$('perfErrors').textContent=String(diagnostics.errors);
   $('perfCycles').textContent=String(cycle);$('perfCooldown').textContent=rateLimitUntil>Date.now()?Math.ceil((rateLimitUntil-Date.now())/1000)+'s remaining':'Clear';
-  $('perfStatus').textContent='Cycle '+cycle+' · '+eligible.length+' eligible · '+universe.length+' selected · '+missed+' eligible but not selected. Coin jobs and candle cache are not active in this shell.';
+  $('perfStatus').textContent='Cycle '+cycle+' · '+eligible.length+' eligible · '+universe.length+' selected · '+missed+' eligible but not selected. RSI contraction scan completed across 3m, 5m and 15m closed candles.';
   $('perfHistory').innerHTML=performanceHistory.slice().reverse().map(x=>'<tr><td>'+x.cycle+'</td><td>'+x.duration.toFixed(2)+'s</td><td>'+x.eligible+'</td><td>'+x.selected+'</td><td>'+x.requests+'</td><td>'+x.peak+'</td><td class="positive">'+x.result+'</td></tr>').join('')||'<tr><td colspan="7">No completed cycles yet.</td></tr>';
 
   $('diagStatus').textContent='Universe cycle '+cycle+' completed · '+universe.length+' selected from '+eligible.length+' eligible contracts · peak concurrent REST requests: '+diagnostics.peakRequests+'.';
