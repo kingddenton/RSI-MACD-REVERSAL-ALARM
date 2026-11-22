@@ -322,6 +322,45 @@ function calculateRsiSeries(closes,period=RSI_PERIOD){
 }
 const rsiCandleHistory=new Map();
 const macdCandleHistory=new Map();
+
+const rsiCandleCache=new Map(),rsiCandleWsFresh=new Map();
+function rsiIntervalMs(tf){return ({'1m':60000,'3m':180000,'5m':300000,'15m':900000})[tf]||60000}
+function cacheRsiKlineEvent(k){
+ if(!k||!k.s||!k.i)return;
+ const key=rsiHistoryKey(String(k.s).toUpperCase(),k.i),row=[Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)];
+ if(!row.every(Number.isFinite))return;
+ const rows=rsiCandleCache.get(key)||[],index=rows.findIndex(x=>Number(x[0])===row[0]);
+ if(index>=0)rows[index]=row;else rows.push(row);
+ rows.sort((a,b)=>Number(a[0])-Number(b[0]));if(rows.length>100)rows.splice(0,rows.length-100);
+ rsiCandleCache.set(key,rows);rsiCandleWsFresh.set(key,Date.now());
+}
+async function getRsiCachedKlines(symbol,tf){
+ const key=rsiHistoryKey(symbol,tf),cached=rsiCandleCache.get(key),freshAt=rsiCandleWsFresh.get(key);
+ if(cached&&cached.length>=40&&freshAt&&Date.now()-freshAt<rsiIntervalMs(tf)*2)return cached;
+ if(!cached||cached.length<40){
+  const rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+tf+'&limit=100');
+  if(!Array.isArray(rows)||!rows.length)throw new Error('Binance returned no candle history for '+symbol+' '+tf);
+  const merged=new Map(rows.map(row=>[Number(row[0]),row]));for(const row of cached||[])merged.set(Number(row[0]),row);
+  const full=[...merged.values()].sort((a,b)=>Number(a[0])-Number(b[0])).slice(-100);
+  rsiCandleCache.set(key,full);rsiCandleWsFresh.set(key,Date.now());return full;
+ }
+ let rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+tf+'&startTime='+Number(cached[cached.length-1][0])+'&limit=100');
+ if(!Array.isArray(rows))rows=[];
+ if(rows.length>=100)rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+tf+'&limit=100');
+ const merged=new Map(cached.map(row=>[Number(row[0]),row]));for(const row of rows)merged.set(Number(row[0]),row);
+ const updated=[...merged.values()].sort((a,b)=>Number(a[0])-Number(b[0])).slice(-100);
+ if(updated.length<40)throw new Error('Incomplete candle history for '+symbol+' '+tf+': '+updated.length+' candles');
+ rsiCandleCache.set(key,updated);rsiCandleWsFresh.set(key,Date.now());return updated;
+}
+function applyRsiHistoryRows(symbol,tf,rows){
+ const closed=rows.filter(row=>Number(row[6])<Date.now()).slice(-100);if(!closed.length)return false;
+ const closes=closed.map(row=>Number(row[4])),lastClosedTime=Number(closed[closed.length-1][6]);if(!closes.every(Number.isFinite))return false;
+ const key=rsiHistoryKey(symbol,tf);
+ macdCandleHistory.set(key,{closes:[...closes],rows:closed.map(row=>row.slice(0,7)),lastClosedTime});
+ if(RSI_INTERVALS.includes(tf))rsiCandleHistory.set(key,{closes:[...closes],lastClosedTime});
+ if(tf===MACD_ALERT_INTERVAL&&!macdAlertState.has(symbol)){const macd=calculateMacdDiagnostic(closes);if(macd)macdAlertState.set(symbol,{hist:macd.hist,lastClosedTime});}
+ return true;
+}
 let rsiSocket=null,rsiSocketConnected=false,rsiSocketWanted=new Set(),rsiReconnectTimer=null,rsiWsMessageId=1;
 const rsiWsPending=new Map(),rsiWsAcked=new Set();
 let rsiWsAckErrors=0,rsiWsMessages=0,rsiWsKlineMessages=0,rsiWsClosedCandles=0,rsiWsLastMessage='Never',rsiWsLastEvent='None',rsiCycleSeeded=0,rsiCycleErrors=0;
@@ -424,68 +463,47 @@ function renderRsiDiagnostics(){
  '<span>Waiting decisions: <b>'+rsiDecisionStats.waiting+'</b></span>'+
  '<span>Rule: <b>'+Math.max(1,Math.min(99,Number($('rsiThreshold').value)||70))+' RSI threshold on any 1 of 3 timeframes</b></span>';
 }
+
 function handleRsiSocketMessage(event){
- let msg;try{msg=JSON.parse(event.data)}catch(e){return}
- if(msg&&msg.data)msg=msg.data;
+ let msg;try{msg=JSON.parse(event.data)}catch(e){return}if(msg&&msg.data)msg=msg.data;
  rsiWsMessages++;rsiWsLastMessage=new Date().toLocaleTimeString();
  if(msg&&Object.prototype.hasOwnProperty.call(msg,'id')){
   const pending=rsiWsPending.get(msg.id);
   if(pending){rsiWsPending.delete(msg.id);if(msg.error)rsiWsAckErrors+=pending.streams.length;else pending.streams.forEach(stream=>rsiWsAcked.add(stream));rsiWsLastEvent=msg.error?'SUBSCRIPTION ERROR':'SUBSCRIPTION ACK';}
   renderRsiDiagnostics();return;
  }
- const k=msg&&msg.k;
- if(!k){rsiWsLastEvent=msg&&msg.e?String(msg.e):'CONTROL / OTHER';renderRsiDiagnostics();return}
+ const k=msg&&msg.k;if(!k){rsiWsLastEvent=msg&&msg.e?String(msg.e):'CONTROL / OTHER';renderRsiDiagnostics();return}
  rsiWsKlineMessages++;rsiWsLastEvent='KLINE '+k.i+(k.x?' CLOSED':' OPEN');
  const symbol=String(k.s||'').toUpperCase(),interval=k.i,key=rsiHistoryKey(symbol,interval);
+ cacheRsiKlineEvent(k);
  if(!k.x){
   if(interval===MACD_ALERT_INTERVAL&&qualifiedMacdWatchlist.has(symbol)){
    const liveHistory=macdCandleHistory.get(key);
-   if(liveHistory&&Number.isFinite(Number(k.c))){
-    const liveCloses=liveHistory.closes.concat(Number(k.c));
-    const liveMacd=calculateMacdDiagnostic(liveCloses);
-    const row=outcomeState.qualified.get(symbol);
-    if(row){row.liveMacd=liveMacd;row.liveMacdTime=Number(k.T)||Date.now();}
-    renderOutcomeBox('qualified');
-   }
+   if(liveHistory&&Number.isFinite(Number(k.c))){const liveMacd=calculateMacdDiagnostic(liveHistory.closes.concat(Number(k.c))),row=outcomeState.qualified.get(symbol);if(row){row.liveMacd=liveMacd;row.liveMacdTime=Number(k.T)||Date.now();}renderOutcomeBox('qualified');}
   }
   renderRsiDiagnostics();return;
  }
- const history=rsiCandleHistory.get(key),macdHistory=macdCandleHistory.get(key);
+ const closeTime=Number(k.T),cacheRows=rsiCandleCache.get(key)||[];
  if(interval===MACD_ALERT_INTERVAL){
-  const closeTime=Number(k.T),isQualified=qualifiedMacdWatchlist.has(symbol);
-  const priorCloseTime=macdHistory?Number(macdHistory.lastClosedTime)||null:null;
-  if(!macdHistory){recordMacdAlertDecision(symbol,null,null,isQualified,'NO HISTORY · 1M CANDLE RECEIVED',closeTime,null);renderRsiDiagnostics();return;}
-  if(closeTime<=Number(macdHistory.lastClosedTime||0)){recordMacdAlertDecision(symbol,null,null,isQualified,'DUPLICATE / STALE CANDLE IGNORED',closeTime,priorCloseTime);renderRsiDiagnostics();return;}
-  macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();
-  if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift();}
-  macdHistory.lastClosedTime=closeTime;
-  const histSeries=calculateMacdHistogramSeries(macdHistory.closes);
-  const currentMacd=calculateMacdDiagnostic(macdHistory.closes);
-  const recentBearCross=findRecentMacdCross(histSeries,'bear');
-  const crossRow=recentBearCross&&macdHistory.rows?macdHistory.rows[macdHistory.rows.length-recentBearCross.bar]:null;
-  const crossTime=crossRow?Number(crossRow[6]):null;
-  const alreadyAlerted=outcomeState.macdRed.get(symbol);
-  const sameCross=alreadyAlerted&&alreadyAlerted.details&&Number(alreadyAlerted.details.crossTime)===crossTime;
+  const prior=macdCandleHistory.get(key),priorCloseTime=prior?Number(prior.lastClosedTime)||null:null;
+  if(prior&&closeTime<=Number(prior.lastClosedTime||0)){renderRsiDiagnostics();return}
+  applyRsiHistoryRows(symbol,interval,cacheRows);
+  const history=macdCandleHistory.get(key);
+  if(!history){recordMacdAlertDecision(symbol,null,null,qualifiedMacdWatchlist.has(symbol),'NO HISTORY · 1M CANDLE RECEIVED',closeTime,priorCloseTime);renderRsiDiagnostics();return}
+  const histSeries=calculateMacdHistogramSeries(history.closes),currentMacd=calculateMacdDiagnostic(history.closes),recentBearCross=findRecentMacdCross(histSeries,'bear');
+  const crossRow=recentBearCross&&history.rows?history.rows[history.rows.length-recentBearCross.bar]:null,crossTime=crossRow?Number(crossRow[6]):null;
+  const isQualified=qualifiedMacdWatchlist.has(symbol),alreadyAlerted=outcomeState.macdRed.get(symbol),sameCross=alreadyAlerted&&alreadyAlerted.details&&Number(alreadyAlerted.details.crossTime)===crossTime;
   const eligibleCross=!!(isQualified&&recentBearCross&&recentBearCross.bar<=10&&crossTime&&crossTime>Number(outcomeState.qualified.get(symbol)?.qualifiedAtMs||0));
   const decision=eligibleCross?(sameCross?'CROSS ALREADY ALERTED':'ALERT FIRED'):(!isQualified?'REJECTED · NOT QUALIFIED':recentBearCross&&recentBearCross.bar<=10?'CROSS PRE-DATES QUALIFICATION':currentMacd&&currentMacd.hist<0?'ALREADY RED · CROSS OLDER THAN 10 BARS':'NO RECENT CROSS');
   recordMacdAlertDecision(symbol,histSeries.length>1?histSeries.at(-2):null,currentMacd?currentMacd.hist:null,isQualified,decision,closeTime,priorCloseTime);
-  if(eligibleCross&&!sameCross)triggerCoinOutcome(symbol,'macdRed',{timeframes:{'1m':currentMacd},interval:'1m',reason:'Legacy MACD crossover logic: most recent histogram green-to-red zero-cross, eligible for bars 1–10 after RSI qualification',bar:recentBearCross.bar,crossTime,previousHistogram:histSeries[histSeries.length-recentBearCross.bar-1],histogram:currentMacd.hist,currentCloseTime:closeTime});
+  if(eligibleCross&&!sameCross)triggerCoinOutcome(symbol,'macdRed',{timeframes:{'1m':currentMacd},interval:'1m',reason:'MACD crossover from cached closed candles; eligible for bars 1–10 after RSI qualification',bar:recentBearCross.bar,crossTime,previousHistogram:histSeries[histSeries.length-recentBearCross.bar-1],histogram:currentMacd.hist,currentCloseTime:closeTime});
   if(currentMacd)macdAlertState.set(symbol,{hist:currentMacd.hist,lastClosedTime:closeTime});
-  if(isQualified)renderOutcomeBox('qualified');
-  updateMacdDiagnostic(symbol);
-  renderRsiDiagnostics();return;
+  if(isQualified)renderOutcomeBox('qualified');updateMacdDiagnostic(symbol);renderRsiDiagnostics();return;
  }
-
- if(!history){renderRsiDiagnostics();return}
- const closeTime=Number(k.T);if(closeTime<=history.lastClosedTime){renderRsiDiagnostics();return}
- rsiWsClosedCandles++;history.closes.push(Number(k.c));if(history.closes.length>120)history.closes.shift();
- history.lastClosedTime=closeTime;
- if(macdHistory){macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift()}macdHistory.lastClosedTime=closeTime;}
- rsiScanStats.checked++;
- evaluateClosedRsi(symbol,interval,closeTime);
- updateMacdDiagnostic(symbol);
- renderRsiOverview();
- renderRsiDiagnostics();
+ const priorRsi=rsiCandleHistory.get(key);if(priorRsi&&closeTime<=Number(priorRsi.lastClosedTime||0)){renderRsiDiagnostics();return}
+ if(!applyRsiHistoryRows(symbol,interval,cacheRows)){renderRsiDiagnostics();return}
+ rsiWsClosedCandles++;rsiScanStats.checked++;evaluateClosedRsi(symbol,interval,closeTime);
+ updateMacdDiagnostic(symbol);renderRsiOverview();renderRsiDiagnostics();
 }
 function sendRsiSubscription(method,streams){
  if(!rsiSocketConnected||!streams.length)return;
@@ -519,26 +537,14 @@ async function syncRsiWebSockets(universe){
  rsiSocketWanted=wanted;
  if(rsiSocketConnected){for(let i=0;i<removed.length;i+=100)sendRsiSubscription('UNSUBSCRIBE',removed.slice(i,i+100));for(let i=0;i<added.length;i+=100)sendRsiSubscription('SUBSCRIBE',added.slice(i,i+100))}
  else if(wanted.size)connectRsiSocket();
- const seedSymbols=[...new Set([...universe.map(coin=>coin.symbol),...qualifiedOnlySymbols])];
- const jobs=seedSymbols.flatMap(symbol=>MONITOR_INTERVALS.filter(interval=>{
-  const key=rsiHistoryKey(symbol,interval);
-  const needsRsi=universe.some(coin=>coin.symbol===symbol)&&RSI_INTERVALS.includes(interval)&&!rsiCandleHistory.has(key);
-  const needsIndicator=MACD_DIAGNOSTIC_INTERVALS.includes(interval)||interval===MACD_ALERT_INTERVAL;
-  const needsIndicatorHistory=needsIndicator&&!macdCandleHistory.has(key);
-  return needsRsi||needsIndicatorHistory;
- }).map(interval=>({coin:{symbol},interval})));
- for(const symbol of diagnosticOnlySymbols)if(!macdCandleHistory.has(rsiHistoryKey(symbol,MACD_ALERT_INTERVAL)))jobs.push({coin:{symbol},interval:MACD_ALERT_INTERVAL});
+
+ const seedSymbols=[...new Set([...universe.map(coin=>coin.symbol),...qualifiedOnlySymbols,...diagnosticOnlySymbols])];
+ const jobs=seedSymbols.flatMap(symbol=>MONITOR_INTERVALS.filter(interval=>!diagnosticOnlySymbols.includes(symbol)||interval===MACD_ALERT_INTERVAL).map(interval=>({coin:{symbol},interval})));
  const required=3;
  const seeded=await mapLimit(jobs,requestConcurrency,async job=>{
-  const data=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(job.coin.symbol)+'&interval='+job.interval+'&limit=100');
-  const closed=data.filter(row=>Number(row[6])<Date.now());if(!closed.length)return {qualified:false};
-  const allCloses=closed.map(row=>Number(row[4])),lastClosedTime=Number(closed[closed.length-1][6]);
-  macdCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:allCloses,rows:closed,lastClosedTime});
-  if(job.interval===MACD_ALERT_INTERVAL){const macd=calculateMacdDiagnostic(allCloses);if(macd)macdAlertState.set(job.coin.symbol,{hist:macd.hist,lastClosedTime});}
-  if(!RSI_INTERVALS.includes(job.interval))return {qualified:false};
-  const rsiCloses=allCloses.slice(-(RSI_PERIOD+required+12));
-  rsiCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:rsiCloses,lastClosedTime});
-  return {qualified:false}; // Defer RSI qualification until every timeframe, including 1m MACD, has finished seeding.
+  const data=await getRsiCachedKlines(job.coin.symbol,job.interval);
+  const applied=applyRsiHistoryRows(job.coin.symbol,job.interval,data);
+  return {qualified:false,applied}; // Reconcile each timeframe from the shared candle cache.
  });
  // Reconcile every selected coin only after all three timeframe histories have been seeded.
  // This makes the outcome box reflect the same complete data set as the full-universe RSI overview.
