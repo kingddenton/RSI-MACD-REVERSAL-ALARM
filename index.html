@@ -32,6 +32,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
   <div class="field"><label for="topCount">TOP GAINERS · X</label><input id="topCount" type="number" min="0" step="1" value="10"></div>
   <div class="field"><label for="bottomCount">BOTTOM LOSERS · Y</label><input id="bottomCount" type="number" min="0" step="1" value="10"></div>
   <div class="field"><label for="volume">MIN 24H QUOTE VOLUME (USDT)</label><input id="volume" type="number" min="0" step="100000" value="2000000"></div>
+  <div class="field"><label for="rsiContractions">RSI CONTRACTING CANDLES</label><input id="rsiContractions" type="number" min="1" max="20" step="1" value="3"></div>
   <div class="field"><label for="workers">CONCURRENT WORKERS</label><input id="workers" type="number" min="1" max="20" value="8"></div>
   <div class="field"><label for="refresh">AUTO REFRESH</label><select id="refresh"><option value="0">Off</option><option value="10">Every 10 seconds</option><option value="30">Every 30 seconds</option><option value="60" selected>Every 60 seconds</option><option value="120">Every 2 minutes</option><option value="continuous">Continuous · immediately after scan</option></select></div>
  </div>
@@ -141,6 +142,15 @@ function qualifyCoin(symbol,details={}){
  outcomeState.qualified.set(key,{symbol:key,time:details.time||new Date().toLocaleTimeString(),details});
  renderOutcomeBox('qualified');
 }
+function evaluateRsiContraction(symbol,closedCandleRsiValues){
+ const required=Math.max(1,Math.min(20,Math.floor(Number($('rsiContractions').value)||3)));
+ const values=Array.isArray(closedCandleRsiValues)?closedCandleRsiValues.map(Number):[];
+ if(values.length<required+1||values.some(v=>!Number.isFinite(v)))return false;
+ const recent=values.slice(-(required+1));
+ const contracting=recent.slice(1).every((value,index)=>value<recent[index]);
+ if(contracting)qualifyCoin(symbol,{reason:'RSI contracting',consecutiveContractions:required,rsiValues:recent});
+ return contracting;
+}
 function triggerCoinOutcome(symbol,outcome,details={}){
  const key=String(symbol||'').trim().toUpperCase();if(!key)return;
  const target=({macd:'macdRed',macdRed:'macdRed',st:'stRed',stRed:'stRed',ema:'emaBearish',emaBearish:'emaBearish'})[outcome];
@@ -154,7 +164,7 @@ function clearOutcomeBoxes(){
  Object.keys(outcomeState).forEach(key=>outcomeState[key].clear());
  renderOutcomeBoxes();
 }
-window.ScannerOutcomeBoxes={qualify:qualifyCoin,trigger:triggerCoinOutcome,clear:clearOutcomeBoxes,render:renderOutcomeBoxes};
+window.ScannerOutcomeBoxes={qualify:qualifyCoin,evaluateRsiContraction,trigger:triggerCoinOutcome,clear:clearOutcomeBoxes,render:renderOutcomeBoxes};
 
 let averageUniverseSeconds=0;
 const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
