@@ -166,9 +166,12 @@ function renderOutcomeBox(key){
  $(cfg.count).textContent=String(items.length);
  $(cfg.list).innerHTML=items.length?items.map(item=>{
   if(key==='qualified'){
-   const values=item.details&&item.details.timeframes||{};
-   const rsiText=['3m','5m','15m'].map(tf=>Number.isFinite(Number(values[tf]))?Number(values[tf]).toFixed(2):'—').join('  |  ');
-   return '<div class="outcome-item qualified-item"><span>'+item.symbol+'</span><span class="outcome-rsi">'+rsiText+'</span></div>';
+   const details=item.details||{},values=details.timeframes||{};
+   const qualifying=Array.isArray(details.qualifyingTimeframes)&&details.qualifyingTimeframes.length
+    ?details.qualifyingTimeframes
+    :['3m','5m','15m'].filter(tf=>Number.isFinite(Number(values[tf]))&&Number(values[tf])>=Number(details.threshold||$('rsiThreshold').value||70));
+   const rsiText=qualifying.map(tf=>tf+' '+Number(values[tf]).toFixed(2)).join('  |  ');
+   return '<div class="outcome-item qualified-item"><span>'+item.symbol+'</span><span class="outcome-rsi">'+(rsiText||'RSI qualification recorded')+'</span></div>';
   }
   return '<div class="outcome-item"><span>'+item.symbol+'</span><span class="outcome-time">'+item.time+'</span></div>';
  }).join(''):'<div class="outcome-empty">'+cfg.empty+'</div>';
