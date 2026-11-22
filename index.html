@@ -46,11 +46,9 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
   <div class="outcome-grid">
    <article class="outcome-card outcome-qualified"><div class="outcome-head"><span>QUALIFIED / MONITORING</span><span class="outcome-count" id="qualifiedCount">0</span></div><div class="outcome-list" id="qualifiedList"><div class="outcome-empty">No qualified coins yet</div></div></article>
    <article class="outcome-card outcome-macd"><div class="outcome-head"><span>MACD RED</span><span class="outcome-count" id="macdRedCount">0</span></div><div class="outcome-list" id="macdRedList"><div class="outcome-empty">No MACD red outcomes yet</div></div></article>
-   <article class="outcome-card outcome-st"><div class="outcome-head"><span>ST RED</span><span class="outcome-count" id="stRedCount">0</span></div><div class="outcome-list" id="stRedList"><div class="outcome-empty">No ST red outcomes yet</div></div></article>
-   <article class="outcome-card outcome-ema"><div class="outcome-head"><span>EMA BEARISH</span><span class="outcome-count" id="emaBearishCount">0</span></div><div class="outcome-list" id="emaBearishList"><div class="outcome-empty">No EMA bearish outcomes yet</div></div></article>
-  </div>
+   </div>
  </div>
- <p class="note">The four boxes are displayed in one horizontal row. Qualified / Monitoring is a persistent second universe. MACD, ST and EMA outcomes are labels only; a coin remains in monitoring and may appear in multiple boxes. Live RSI qualification is connected. MACD RED is triggered by a fresh closed 1m histogram green-to-red transition after RSI qualification. ST RED uses completed-candle ATR(10,3) flips on 1m/3m/5m/15m/30m/1h. EMA BEARISH uses a completed-candle EMA7/25 cross below with EMA99 above both on 1m/3m/5m/15m.</p>
+ <p class="note">Qualified / Monitoring is a persistent second universe. MACD RED is triggered only by a fresh completed 1m histogram green-to-red crossover after RSI qualification. Qualified coins remain in monitoring after a MACD alert.</p>
 </section>
 
 <details class="panel monitor-panel" id="diagnostics" open>
@@ -155,15 +153,11 @@ const diagnostics={requests:0,peakRequests:0,errors:0};
 const performanceHistory=[];
 const outcomeState={
  qualified:new Map(),
- macdRed:new Map(),
- stRed:new Map(),
- emaBearish:new Map()
+ macdRed:new Map()
 };
 const outcomeConfig={
  qualified:{list:'qualifiedList',count:'qualifiedCount',empty:'No qualified coins yet'},
- macdRed:{list:'macdRedList',count:'macdRedCount',empty:'No MACD red outcomes yet'},
- stRed:{list:'stRedList',count:'stRedCount',empty:'No ST red outcomes yet'},
- emaBearish:{list:'emaBearishList',count:'emaBearishCount',empty:'No EMA bearish outcomes yet'}
+ macdRed:{list:'macdRedList',count:'macdRedCount',empty:'No MACD red outcomes yet'}
 };
 function renderOutcomeBox(key){
  const cfg=outcomeConfig[key],items=[...outcomeState[key].values()];
@@ -203,7 +197,7 @@ function evaluateRsiContraction(symbol,closedCandleRsiValues){
 }
 function triggerCoinOutcome(symbol,outcome,details={}){
  const key=String(symbol||'').trim().toUpperCase();if(!key)return;
- const target=({macd:'macdRed',macdRed:'macdRed',st:'stRed',stRed:'stRed',ema:'emaBearish',emaBearish:'emaBearish'})[outcome];
+ const target=({macd:'macdRed',macdRed:'macdRed'})[outcome];
  if(!target)throw new Error('Unknown outcome type: '+outcome);
  outcomeState[target].delete(key);
  outcomeState[target].set(key,{symbol:key,time:details.time||new Date().toLocaleTimeString(),details});
@@ -243,34 +237,6 @@ function emaSeries(values,period){
  out[period-1]=ema;
  for(let i=period;i<values.length;i++){ema=values[i]*k+ema*(1-k);out[i]=ema}
  return out;
-}
-const ST_INTERVALS=['1m','3m','5m','15m','30m','1h'], EMA_ALERT_INTERVALS=['1m','3m','5m','15m'];
-const stAlertState=new Map(),emaAlertState=new Map();
-function calculateSupertrendDirection(rows,period=10,multiplier=3){
- if(!rows||rows.length<period+2)return null;
- const tr=[],high=rows.map(x=>Number(x[2])),low=rows.map(x=>Number(x[3])),close=rows.map(x=>Number(x[4]));
- for(let i=0;i<rows.length;i++){const prev=i?close[i-1]:close[i];tr.push(Math.max(high[i]-low[i],Math.abs(high[i]-prev),Math.abs(low[i]-prev)))}
- let atr=tr.slice(1,period+1).reduce((a,b)=>a+b,0)/period;
- let upper=0,lower=0,direction=1,prevDirection=1;
- for(let i=period;i<rows.length;i++){
-  if(i>period)atr=((atr*(period-1))+tr[i])/period;
-  const mid=(high[i]+low[i])/2,bu=mid+multiplier*atr,bl=mid-multiplier*atr;
-  if(i===period){upper=bu;lower=bl;direction=close[i]>=mid?1:-1}
-  else{
-   const finalUpper=bu<upper||close[i-1]>upper?bu:upper;
-   const finalLower=bl>lower||close[i-1]<lower?bl:lower;
-   prevDirection=direction;
-   if(direction===1&&close[i]<finalLower)direction=-1;
-   else if(direction===-1&&close[i]>finalUpper)direction=1;
-   upper=finalUpper;lower=finalLower;
-  }
- }
- return {direction,previousDirection:prevDirection,line:direction===1?lower:upper};
-}
-function calculateEmaSignal(closes){
- const e7=emaSeries(closes,7),e25=emaSeries(closes,25),e99=emaSeries(closes,99),i=closes.length-1;
- if(i<99||![e7[i],e25[i],e99[i],e7[i-1],e25[i-1]].every(Number.isFinite))return null;
- return {fast:e7[i],mid:e25[i],slow:e99[i],previousFast:e7[i-1],previousMid:e25[i-1],bearish:e7[i]<e25[i]&&e25[i]<e99[i],crossedDown:e7[i-1]>=e25[i-1]&&e7[i]<e25[i]&&e25[i]<e99[i]};
 }
 function calculateMacdDiagnostic(closes){
  const fast=emaSeries(closes,12),slow=emaSeries(closes,26),dif=[];
@@ -459,48 +425,15 @@ function handleRsiSocketMessage(event){
    if(crossed&&isQualified)triggerCoinOutcome(symbol,'macdRed',{timeframes:{'1m':currentMacd},interval:'1m',reason:'Closed 1m MACD histogram changed green to red',previousHistogram:priorMacd.hist,histogram:currentMacd.hist,previousCloseTime:priorCloseTime,currentCloseTime:closeTime});
   }else recordMacdAlertDecision(symbol,priorMacd?priorMacd.hist:null,currentMacd?currentMacd.hist:null,isQualified,'MACD BASELINE NOT READY · NEEDS 34+ CLOSES',closeTime,priorCloseTime);
   if(currentMacd)macdAlertState.set(symbol,{hist:currentMacd.hist,lastClosedTime:closeTime});
-  // The 1m stream carries three independent engines. Process ST and EMA
-  // after the shared candle history has been updated, before returning.
-  if(ST_INTERVALS.includes(interval)){
-   const st=calculateSupertrendDirection(macdHistory.rows||[]);
-   const prior=stAlertState.get(key);
-   if(st&&prior&&isQualified&&prior.direction===1&&st.direction===-1){
-    triggerCoinOutcome(symbol,'stRed',{interval,reason:'Completed candle Supertrend flipped green to red',atrPeriod:10,multiplier:3,previousDirection:prior.direction,direction:st.direction,previousCloseTime:prior.lastClosedTime,currentCloseTime:closeTime});
-   }
-   if(st)stAlertState.set(key,{direction:st.direction,lastClosedTime:closeTime});
-  }
-  if(EMA_ALERT_INTERVALS.includes(interval)){
-   const ema=calculateEmaSignal(macdHistory.closes),prior=emaAlertState.get(key);
-   if(ema&&prior&&isQualified&&ema.crossedDown){
-    triggerCoinOutcome(symbol,'emaBearish',{interval,reason:'EMA 7 crossed below EMA 25 with EMA 99 above both',ema7:ema.fast,ema25:ema.mid,ema99:ema.slow,previousCloseTime:prior.lastClosedTime,currentCloseTime:closeTime});
-   }
-   if(ema)emaAlertState.set(key,{bearish:ema.bearish,lastClosedTime:closeTime});
-  }
   updateMacdDiagnostic(symbol);
   renderRsiDiagnostics();return;
  }
- if(ST_INTERVALS.includes(interval)||EMA_ALERT_INTERVALS.includes(interval)){
-  if(!macdHistory){renderRsiDiagnostics();return}
-  const closeTime=Number(k.T);if(closeTime<=macdHistory.lastClosedTime){renderRsiDiagnostics();return}
-  macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift()}macdHistory.lastClosedTime=closeTime;
-  if(ST_INTERVALS.includes(interval)){
-   const st=calculateSupertrendDirection(macdHistory.rows||[]);
-   const prior=stAlertState.get(key);
-   if(st&&prior&&qualifiedMacdWatchlist.has(symbol)&&prior.direction===1&&st.direction===-1){triggerCoinOutcome(symbol,'stRed',{interval,reason:'Completed candle Supertrend flipped green to red',atrPeriod:10,multiplier:3});}
-   if(st)stAlertState.set(key,{direction:st.direction,lastClosedTime:closeTime});
-  }
-  if(EMA_ALERT_INTERVALS.includes(interval)){
-   const ema=calculateEmaSignal(macdHistory.closes),prior=emaAlertState.get(key);
-   if(ema&&prior&&qualifiedMacdWatchlist.has(symbol)&&ema.crossedDown){triggerCoinOutcome(symbol,'emaBearish',{interval,reason:'EMA 7 crossed below EMA 25 with EMA 99 above both',ema7:ema.fast,ema25:ema.mid,ema99:ema.slow});}
-   if(ema)emaAlertState.set(key,{bearish:ema.bearish,lastClosedTime:closeTime});
-  }
-  renderRsiDiagnostics();if(!RSI_INTERVALS.includes(interval))return;
- }
+
  if(!history){renderRsiDiagnostics();return}
  const closeTime=Number(k.T);if(closeTime<=history.lastClosedTime){renderRsiDiagnostics();return}
  rsiWsClosedCandles++;history.closes.push(Number(k.c));if(history.closes.length>120)history.closes.shift();
  history.lastClosedTime=closeTime;
- if(macdHistory&&!ST_INTERVALS.includes(interval)&&!EMA_ALERT_INTERVALS.includes(interval)){macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift()}macdHistory.lastClosedTime=closeTime;}
+ if(macdHistory){macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift()}macdHistory.lastClosedTime=closeTime;}
  rsiScanStats.checked++;
  evaluateClosedRsi(symbol,interval,closeTime);
  updateMacdDiagnostic(symbol);
@@ -524,7 +457,7 @@ function connectRsiSocket(){
 async function syncRsiWebSockets(universe){
  rsiOverviewSymbols=universe.map(x=>x.symbol);
  renderRsiOverview();
- const symbols=new Set(universe.map(x=>x.symbol)),MONITOR_INTERVALS=[...new Set([...RSI_INTERVALS,MACD_ALERT_INTERVAL,...ST_INTERVALS,...EMA_ALERT_INTERVALS])];
+ const symbols=new Set(universe.map(x=>x.symbol)),MONITOR_INTERVALS=[...new Set([...RSI_INTERVALS,MACD_ALERT_INTERVAL])];
  const qualifiedOnlySymbols=[...qualifiedMacdWatchlist].filter(symbol=>!symbols.has(symbol));
  const diagnosticOnlySymbols=MACD_DIAGNOSTIC_WATCHLIST.filter(symbol=>!symbols.has(symbol)&&!qualifiedMacdWatchlist.has(symbol));
  const wanted=new Set([...symbols].flatMap(s=>MONITOR_INTERVALS.map(i=>rsiStreamName(s,i))));
@@ -543,7 +476,7 @@ async function syncRsiWebSockets(universe){
  const jobs=seedSymbols.flatMap(symbol=>MONITOR_INTERVALS.filter(interval=>{
   const key=rsiHistoryKey(symbol,interval);
   const needsRsi=universe.some(coin=>coin.symbol===symbol)&&RSI_INTERVALS.includes(interval)&&!rsiCandleHistory.has(key);
-  const needsIndicator=MACD_DIAGNOSTIC_INTERVALS.includes(interval)||interval===MACD_ALERT_INTERVAL||ST_INTERVALS.includes(interval)||EMA_ALERT_INTERVALS.includes(interval);
+  const needsIndicator=MACD_DIAGNOSTIC_INTERVALS.includes(interval)||interval===MACD_ALERT_INTERVAL;
   const needsIndicatorHistory=needsIndicator&&!macdCandleHistory.has(key);
   return needsRsi||needsIndicatorHistory;
  }).map(interval=>({coin:{symbol},interval})));
@@ -555,8 +488,6 @@ async function syncRsiWebSockets(universe){
   const allCloses=closed.map(row=>Number(row[4])),lastClosedTime=Number(closed[closed.length-1][6]);
   macdCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:allCloses,rows:closed,lastClosedTime});
   if(job.interval===MACD_ALERT_INTERVAL){const macd=calculateMacdDiagnostic(allCloses);if(macd)macdAlertState.set(job.coin.symbol,{hist:macd.hist,lastClosedTime});}
-  if(ST_INTERVALS.includes(job.interval)){const st=calculateSupertrendDirection(closed);if(st)stAlertState.set(rsiHistoryKey(job.coin.symbol,job.interval),{direction:st.direction,lastClosedTime});}
-  if(EMA_ALERT_INTERVALS.includes(job.interval)){const ema=calculateEmaSignal(allCloses);if(ema)emaAlertState.set(rsiHistoryKey(job.coin.symbol,job.interval),{bearish:ema.bearish,lastClosedTime});}
   if(!RSI_INTERVALS.includes(job.interval))return {qualified:false};
   const rsiCloses=allCloses.slice(-(RSI_PERIOD+required+12));
   rsiCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:rsiCloses,lastClosedTime});
