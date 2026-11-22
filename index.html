@@ -32,7 +32,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
   <div class="field"><label for="topCount">TOP GAINERS · X</label><input id="topCount" type="number" min="0" step="1" value="10"></div>
   <div class="field"><label for="bottomCount">BOTTOM LOSERS · Y</label><input id="bottomCount" type="number" min="0" step="1" value="10"></div>
   <div class="field"><label for="volume">MIN 24H QUOTE VOLUME (USDT)</label><input id="volume" type="number" min="0" step="100000" value="2000000"></div>
-  <div class="field"><label for="rsiThreshold">RSI THRESHOLD · ALL 3 TIMEFRAMES</label><input id="rsiThreshold" type="number" min="1" max="99" step="1" value="70"></div>
+  <div class="field"><label for="rsiThreshold">RSI THRESHOLD · ANY 1 TIMEFRAME</label><input id="rsiThreshold" type="number" min="1" max="99" step="1" value="70"></div>
   <div class="field"><label for="workers">CONCURRENT WORKERS</label><input id="workers" type="number" min="1" max="20" value="8"></div>
   <div class="field"><label for="refresh">AUTO REFRESH</label><select id="refresh"><option value="0">Off</option><option value="10">Every 10 seconds</option><option value="30">Every 30 seconds</option><option value="60" selected>Every 60 seconds</option><option value="120">Every 2 minutes</option><option value="continuous">Continuous · immediately after scan</option></select></div>
  </div>
@@ -125,7 +125,24 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 </main>
 <script>
 (()=>{'use strict';
-const API='https://fapi.binance.com',STORE='reversal-alarm-shell-v1', $=id=>document.getElementById(id);
+const API='https://fapi.binance.com',STORE='reversal-alarm-shell-v1';
+const missingDomIds=new Set();
+const $=id=>{
+ const el=document.getElementById(id);
+ if(el)return el;
+ if(!missingDomIds.has(id)){
+  missingDomIds.add(id);
+  console.error('[Scanner DOM] Missing element id:',id);
+  let report=document.getElementById('domIntegrityReport');
+  if(!report){
+   report=document.createElement('div');report.id='domIntegrityReport';report.className='status negative';
+   report.style.cssText='margin:8px 0;padding:8px;border:1px solid #fb7185;border-radius:7px;background:#301522;color:#fecdd3';
+   const main=document.querySelector('main');if(main)main.insertBefore(report,main.children[1]||null);
+  }
+  report.textContent='DISPLAY INTEGRITY WARNING · Missing page element(s): '+[...missingDomIds].join(', ')+'. Scanner calculations are continuing; please report this diagnostic.';
+ }
+ const fallback=document.createElement('span');fallback.dataset.missingDomId=id;return fallback;
+};
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let running=false,stopRequested=false,scanBusy=false,loopTimer=null,rateLimitUntil=0;
 let requestConcurrency=8,activeRequests=0,requestWaiters=[],exchangeInfoCache=null,cycle=0;
@@ -165,8 +182,8 @@ function qualifyCoin(symbol,details={}){
 function evaluateRsiContraction(symbol,closedCandleRsiValues){
  const threshold=Math.max(1,Math.min(99,Number($('rsiThreshold').value)||70));
  const values=Array.isArray(closedCandleRsiValues)?closedCandleRsiValues.map(Number):[];
- if(values.length!==3||values.some(v=>!Number.isFinite(v)||v<threshold))return false;
- qualifyCoin(symbol,{reason:'RSI threshold reached on all three timeframes',threshold,rsiValues:values});
+ if(values.length!==3||!values.some(v=>Number.isFinite(v)&&v>=threshold))return false;
+ qualifyCoin(symbol,{reason:'RSI threshold reached on any one timeframe',threshold,rsiValues:values});
  return true;
 }
 function triggerCoinOutcome(symbol,outcome,details={}){
