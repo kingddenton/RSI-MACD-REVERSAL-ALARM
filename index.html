@@ -183,7 +183,7 @@ function renderOutcomeBoxes(){Object.keys(outcomeConfig).forEach(renderOutcomeBo
 function qualifyCoin(symbol,details={}){
  const key=String(symbol||'').trim().toUpperCase();if(!key)return;
  outcomeState.qualified.delete(key);
- outcomeState.qualified.set(key,{symbol:key,time:details.time||new Date().toLocaleTimeString(),details});
+ outcomeState.qualified.set(key,{symbol:key,time:details.time||new Date().toLocaleTimeString(),qualifiedAtMs:Date.now(),details});
  qualifiedMacdWatchlist.add(key);
  const baseline=macdAlertState.get(key);
  if(baseline){
@@ -242,6 +242,21 @@ function emaSeries(values,period){
  out[period-1]=ema;
  for(let i=period;i<values.length;i++){ema=values[i]*k+ema*(1-k);out[i]=ema}
  return out;
+}
+function calculateMacdHistogramSeries(closes){
+ const fast=emaSeries(closes,12),slow=emaSeries(closes,26),dif=[];
+ for(let i=0;i<closes.length;i++)if(Number.isFinite(fast[i])&&Number.isFinite(slow[i]))dif[i]=fast[i]-slow[i];
+ const valid=dif.filter(Number.isFinite),dea=emaSeries(valid,9),hist=[];
+ let j=0;
+ for(let i=0;i<dif.length;i++)if(Number.isFinite(dif[i])){if(Number.isFinite(dea[j]))hist[i]=dif[i]-dea[j];j++;}
+ return hist;
+}
+function findRecentMacdCross(hist,direction){
+ for(let i=hist.length-1;i>=1;i--){
+  if(direction==='bear'&&hist[i]<0&&hist[i-1]>=0)return {index:i,bar:hist.length-i};
+  if(direction==='bull'&&hist[i]>0&&hist[i-1]<=0)return {index:i,bar:hist.length-i};
+ }
+ return null;
 }
 function calculateMacdDiagnostic(closes){
  const fast=emaSeries(closes,12),slow=emaSeries(closes,26),dif=[];
@@ -431,17 +446,20 @@ function handleRsiSocketMessage(event){
   const priorCloseTime=macdHistory?Number(macdHistory.lastClosedTime)||null:null;
   if(!macdHistory){recordMacdAlertDecision(symbol,null,null,isQualified,'NO HISTORY · 1M CANDLE RECEIVED',closeTime,null);renderRsiDiagnostics();return;}
   if(closeTime<=Number(macdHistory.lastClosedTime||0)){recordMacdAlertDecision(symbol,null,null,isQualified,'DUPLICATE / STALE CANDLE IGNORED',closeTime,priorCloseTime);renderRsiDiagnostics();return;}
-  const priorMacd=calculateMacdDiagnostic(macdHistory.closes);
   macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();
   if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift();}
   macdHistory.lastClosedTime=closeTime;
+  const histSeries=calculateMacdHistogramSeries(macdHistory.closes);
   const currentMacd=calculateMacdDiagnostic(macdHistory.closes);
-  if(priorMacd&&currentMacd){
-   const crossed=priorMacd.hist>=0&&currentMacd.hist<0;
-   const decision=crossed?(isQualified?'ALERT FIRED':'REJECTED · NOT QUALIFIED'):(currentMacd.hist<0?'ALREADY RED · NO NEW CROSS':'NO CROSS');
-   recordMacdAlertDecision(symbol,priorMacd.hist,currentMacd.hist,isQualified,decision,closeTime,priorCloseTime);
-   if(crossed&&isQualified)triggerCoinOutcome(symbol,'macdRed',{timeframes:{'1m':currentMacd},interval:'1m',reason:'Closed 1m MACD histogram changed green to red',previousHistogram:priorMacd.hist,histogram:currentMacd.hist,previousCloseTime:priorCloseTime,currentCloseTime:closeTime});
-  }else recordMacdAlertDecision(symbol,priorMacd?priorMacd.hist:null,currentMacd?currentMacd.hist:null,isQualified,'MACD BASELINE NOT READY · NEEDS 34+ CLOSES',closeTime,priorCloseTime);
+  const recentBearCross=findRecentMacdCross(histSeries,'bear');
+  const crossRow=recentBearCross&&macdHistory.rows?macdHistory.rows[macdHistory.rows.length-recentBearCross.bar]:null;
+  const crossTime=crossRow?Number(crossRow[6]):null;
+  const alreadyAlerted=outcomeState.macdRed.get(symbol);
+  const sameCross=alreadyAlerted&&alreadyAlerted.details&&Number(alreadyAlerted.details.crossTime)===crossTime;
+  const eligibleCross=!!(isQualified&&recentBearCross&&recentBearCross.bar<=10&&crossTime&&crossTime>Number(outcomeState.qualified.get(symbol)?.qualifiedAtMs||0));
+  const decision=eligibleCross?(sameCross?'CROSS ALREADY ALERTED':'ALERT FIRED'):(!isQualified?'REJECTED · NOT QUALIFIED':recentBearCross&&recentBearCross.bar<=10?'CROSS PRE-DATES QUALIFICATION':currentMacd&&currentMacd.hist<0?'ALREADY RED · CROSS OLDER THAN 10 BARS':'NO RECENT CROSS');
+  recordMacdAlertDecision(symbol,histSeries.length>1?histSeries.at(-2):null,currentMacd?currentMacd.hist:null,isQualified,decision,closeTime,priorCloseTime);
+  if(eligibleCross&&!sameCross)triggerCoinOutcome(symbol,'macdRed',{timeframes:{'1m':currentMacd},interval:'1m',reason:'Legacy MACD crossover logic: most recent histogram green-to-red zero-cross, eligible for bars 1–10 after RSI qualification',bar:recentBearCross.bar,crossTime,previousHistogram:histSeries[histSeries.length-recentBearCross.bar-1],histogram:currentMacd.hist,currentCloseTime:closeTime});
   if(currentMacd)macdAlertState.set(symbol,{hist:currentMacd.hist,lastClosedTime:closeTime});
   if(isQualified)renderOutcomeBox('qualified');
   updateMacdDiagnostic(symbol);
