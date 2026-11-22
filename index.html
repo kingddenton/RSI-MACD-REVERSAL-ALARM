@@ -235,12 +235,14 @@ async function syncRsiWebSockets(universe){
   rsiCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes,lastClosedTime});
   return {qualified:evaluateClosedRsi(job.coin.symbol,job.interval,lastClosedTime)};
  });
- rsiScanStats.errors+=seeded.output.filter(x=>x&&x.error).length;
+ const failures=seeded.output.filter(x=>x&&x.error);
+ rsiScanStats.errors+=failures.length;
+ const sampleError=failures.length?String(failures[0].error):'None';
  const stats=$('signalDiagnostics').querySelector('.stats');
- if(stats)stats.innerHTML='<span>Closed WebSocket candles: <b>'+rsiScanStats.checked+'</b></span><span>New timeframe histories: <b>'+seeded.done+'</b></span><span>Bootstrap errors: <b>'+rsiScanStats.errors+'</b></span><span>Rule: <b>'+required+' consecutive declines</b></span>';
- $('signalDiagnostics').querySelector('.note').textContent='Live RSI(14) qualification uses Binance Futures WebSockets for completed 3m, 5m and 15m candles. REST is used only to seed history for newly selected coins.';
- $('perfCache').textContent='WebSocket live';$('perfJobs').textContent=String(seeded.done);$('perfJobResults').textContent='0 / '+rsiScanStats.errors;
- setStatus('RSI WebSocket monitoring active · '+symbols.size+' coins · '+wanted.size+' streams · seeded '+seeded.done+' new histories.');
+ if(stats)stats.innerHTML='<span>Closed WebSocket candles: <b>'+rsiScanStats.checked+'</b></span><span>New timeframe histories: <b>'+seeded.done+' / '+jobs.length+'</b></span><span>Bootstrap errors: <b>'+rsiScanStats.errors+'</b></span><span>Rule: <b>'+required+' consecutive declines</b></span>';
+ $('signalDiagnostics').querySelector('.note').textContent=failures.length?'RSI WebSocket is configured, but REST history seeding failed. First error: '+sampleError:'Live RSI(14) qualification uses Binance Futures WebSockets for completed 3m, 5m and 15m candles. REST history seeding completed.';
+ $('perfCache').textContent=rsiSocketConnected?'WebSocket connected':'WebSocket connecting';$('perfJobs').textContent=String(seeded.done);$('perfJobResults').textContent='0 / '+rsiScanStats.errors;
+ setStatus(failures.length?'RSI history seed failed: '+sampleError:'RSI WebSocket monitoring active · '+symbols.size+' coins · '+wanted.size+' streams · seeded '+seeded.done+' new histories.',!!failures.length);
 }
 function stopRsiWebSockets(){clearTimeout(rsiReconnectTimer);rsiSocketWanted.clear();if(rsiSocket){try{rsiSocket.close()}catch(e){}}rsiSocket=null;rsiSocketConnected=false}
 window.addEventListener('beforeunload',stopRsiWebSockets);
