@@ -206,7 +206,6 @@ function triggerCoinOutcome(symbol,outcome,details={}){
  const target=({macd:'macdRed',macdRed:'macdRed',st:'stRed',stRed:'stRed',ema:'emaBearish',emaBearish:'emaBearish'})[outcome];
  if(!target)throw new Error('Unknown outcome type: '+outcome);
  outcomeState.qualified.delete(key);
- if(target==='macdRed')qualifiedMacdWatchlist.delete(key);
  outcomeState[target].delete(key);
  outcomeState[target].set(key,{symbol:key,time:details.time||new Date().toLocaleTimeString(),details});
  renderOutcomeBox('qualified');renderOutcomeBox(target);
@@ -445,8 +444,8 @@ function handleRsiSocketMessage(event){
  if(!k.x){renderRsiDiagnostics();return}
  const symbol=String(k.s||'').toUpperCase(),interval=k.i,key=rsiHistoryKey(symbol,interval),history=rsiCandleHistory.get(key),macdHistory=macdCandleHistory.get(key);
  if(interval===MACD_ALERT_INTERVAL){const closeTime=Number(k.T),prior=macdAlertState.get(symbol),isQualified=qualifiedMacdWatchlist.has(symbol);if(!macdHistory){recordMacdAlertDecision(symbol,prior?prior.hist:null,null,isQualified,'NO HISTORY · 1M CANDLE RECEIVED',closeTime,prior?prior.lastClosedTime:null);renderRsiDiagnostics();return}if(closeTime<=macdHistory.lastClosedTime){recordMacdAlertDecision(symbol,prior?prior.hist:null,null,isQualified,'DUPLICATE / STALE CANDLE IGNORED',closeTime,prior?prior.lastClosedTime:null);renderRsiDiagnostics();return}macdHistory.closes.push(Number(k.c));if(macdHistory.closes.length>200)macdHistory.closes.shift();if(macdHistory.rows){macdHistory.rows.push([Number(k.t),Number(k.o),Number(k.h),Number(k.l),Number(k.c),Number(k.v),Number(k.T)]);if(macdHistory.rows.length>200)macdHistory.rows.shift()}macdHistory.lastClosedTime=closeTime;const macd=calculateMacdDiagnostic(macdHistory.closes);if(macd&&prior){const crossed=prior.hist>=0&&macd.hist<0;const decision=crossed?(isQualified?'ALERT FIRED':'REJECTED · NOT QUALIFIED'):(macd.hist<0?'ALREADY RED · NO NEW CROSS':'NO CROSS');recordMacdAlertDecision(symbol,prior.hist,macd.hist,isQualified,decision,closeTime,prior.lastClosedTime);if(crossed&&isQualified)triggerCoinOutcome(symbol,'macdRed',{timeframes:{'1m':macd},interval:'1m',reason:'Closed 1m MACD histogram changed green to red',previousHistogram:prior.hist,histogram:macd.hist});}else if(macd){recordMacdAlertDecision(symbol,prior?prior.hist:null,macd.hist,isQualified,'NO PRIOR BASELINE',closeTime,prior?prior.lastClosedTime:null);}else{recordMacdAlertDecision(symbol,prior?prior.hist:null,null,isQualified,'MACD NOT READY · NEEDS 34+ CLOSES',closeTime,prior?prior.lastClosedTime:null)}if(macd)macdAlertState.set(symbol,{hist:macd.hist,lastClosedTime:closeTime});updateMacdDiagnostic(symbol);
- if(ST_INTERVALS.includes(interval)){const st=calculateSupertrendDirection(macdHistory.rows||[]),stPrior=stAlertState.get(key);if(st&&stPrior&&outcomeState.qualified.has(symbol)&&stPrior.direction===1&&st.direction===-1)triggerCoinOutcome(symbol,'stRed',{interval,reason:'Completed candle Supertrend flipped green to red',atrPeriod:10,multiplier:3});if(st)stAlertState.set(key,{direction:st.direction,lastClosedTime:closeTime});}
- if(EMA_ALERT_INTERVALS.includes(interval)){const ema=calculateEmaSignal(macdHistory.closes),emaPrior=emaAlertState.get(key);if(ema&&emaPrior&&outcomeState.qualified.has(symbol)&&ema.crossedDown)triggerCoinOutcome(symbol,'emaBearish',{interval,reason:'EMA 7 crossed below EMA 25 with EMA 99 above both',ema7:ema.fast,ema25:ema.mid,ema99:ema.slow});if(ema)emaAlertState.set(key,{bearish:ema.bearish,lastClosedTime:closeTime});}
+ if(ST_INTERVALS.includes(interval)){const st=calculateSupertrendDirection(macdHistory.rows||[]),stPrior=stAlertState.get(key);if(st&&stPrior&&qualifiedMacdWatchlist.has(symbol)&&stPrior.direction===1&&st.direction===-1)triggerCoinOutcome(symbol,'stRed',{interval,reason:'Completed candle Supertrend flipped green to red',atrPeriod:10,multiplier:3});if(st)stAlertState.set(key,{direction:st.direction,lastClosedTime:closeTime});}
+ if(EMA_ALERT_INTERVALS.includes(interval)){const ema=calculateEmaSignal(macdHistory.closes),emaPrior=emaAlertState.get(key);if(ema&&emaPrior&&qualifiedMacdWatchlist.has(symbol)&&ema.crossedDown)triggerCoinOutcome(symbol,'emaBearish',{interval,reason:'EMA 7 crossed below EMA 25 with EMA 99 above both',ema7:ema.fast,ema25:ema.mid,ema99:ema.slow});if(ema)emaAlertState.set(key,{bearish:ema.bearish,lastClosedTime:closeTime});}
  renderRsiDiagnostics();return}
  if(ST_INTERVALS.includes(interval)||EMA_ALERT_INTERVALS.includes(interval)){
   if(!macdHistory){renderRsiDiagnostics();return}
@@ -455,12 +454,12 @@ function handleRsiSocketMessage(event){
   if(ST_INTERVALS.includes(interval)){
    const st=calculateSupertrendDirection(macdHistory.rows||[]);
    const prior=stAlertState.get(key);
-   if(st&&prior&&outcomeState.qualified.has(symbol)&&prior.direction===1&&st.direction===-1){triggerCoinOutcome(symbol,'stRed',{interval,reason:'Completed candle Supertrend flipped green to red',atrPeriod:10,multiplier:3});}
+   if(st&&prior&&qualifiedMacdWatchlist.has(symbol)&&prior.direction===1&&st.direction===-1){triggerCoinOutcome(symbol,'stRed',{interval,reason:'Completed candle Supertrend flipped green to red',atrPeriod:10,multiplier:3});}
    if(st)stAlertState.set(key,{direction:st.direction,lastClosedTime:closeTime});
   }
   if(EMA_ALERT_INTERVALS.includes(interval)){
    const ema=calculateEmaSignal(macdHistory.closes),prior=emaAlertState.get(key);
-   if(ema&&prior&&outcomeState.qualified.has(symbol)&&ema.crossedDown){triggerCoinOutcome(symbol,'emaBearish',{interval,reason:'EMA 7 crossed below EMA 25 with EMA 99 above both',ema7:ema.fast,ema25:ema.mid,ema99:ema.slow});}
+   if(ema&&prior&&qualifiedMacdWatchlist.has(symbol)&&ema.crossedDown){triggerCoinOutcome(symbol,'emaBearish',{interval,reason:'EMA 7 crossed below EMA 25 with EMA 99 above both',ema7:ema.fast,ema25:ema.mid,ema99:ema.slow});}
    if(ema)emaAlertState.set(key,{bearish:ema.bearish,lastClosedTime:closeTime});
   }
   renderRsiDiagnostics();if(!RSI_INTERVALS.includes(interval))return;
