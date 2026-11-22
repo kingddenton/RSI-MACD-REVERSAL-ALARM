@@ -98,6 +98,12 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 <details class="panel monitor-panel" id="signalDiagnostics">
  <summary style="cursor:pointer;font-size:15px;font-weight:750;list-style:none">SIGNAL / QUALIFICATION DIAGNOSTICS</summary>
  <p class="note">Live RSI(14) contraction qualification on closed 3m, 5m and 15m candles. A coin qualifies when any monitored timeframe meets the editable contraction count.</p>
+ <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0">
+  <button id="btcWsTest" class="secondary">TEST BTC WEBSOCKET</button>
+  <button id="btcWsStop" class="secondary" disabled>STOP TEST</button>
+  <span id="btcWsStatus" class="muted">Test idle</span>
+ </div>
+ <div class="wrap" style="margin:10px 0"><table><thead><tr><th>TIME</th><th>MESSAGE</th><th>DETAIL</th></tr></thead><tbody id="btcWsLog"><tr><td colspan="3" class="muted">Run the isolated BTC test to inspect raw Binance events.</td></tr></tbody></table></div>
  <div class="stats"><span>Qualified coins: <b>Not active yet</b></span><span>Rejected coins: <b>Not active yet</b></span><span>Alarm transitions: <b>Not active yet</b></span></div>
  <div class="wrap" style="margin-top:10px"><table><thead><tr><th>Symbol</th><th>Stage</th><th>Timeframe</th><th>Observed value</th><th>Decision / reason</th></tr></thead><tbody><tr><td colspan="5" class="muted">Waiting for the first live RSI scan.</td></tr></tbody></table></div>
 </details>
@@ -414,5 +420,39 @@ $('refresh').addEventListener('change',()=>{if(running&&!scanBusy){clearTimeout(
 loadSettings();
 renderOutcomeBoxes();
 })();
+
+// Isolated Binance Futures WebSocket test: does not alter the live scanner socket or RSI qualification.
+let btcWsTestSocket=null,btcWsTestCount=0;
+function logBtcWsTest(kind,detail){
+ const body=$('btcWsLog');if(!body)return;
+ if(btcWsTestCount===0)body.innerHTML='';
+ btcWsTestCount++;
+ const row=document.createElement('tr');
+ [new Date().toLocaleTimeString(),kind,String(detail)].forEach(value=>{const cell=document.createElement('td');cell.textContent=value;row.appendChild(cell)});
+ body.prepend(row);while(body.children.length>30)body.lastChild.remove();
+ $('btcWsStatus').textContent=kind+' · '+btcWsTestCount+' events';
+}
+function stopBtcWsTest(){
+ if(btcWsTestSocket){btcWsTestSocket.close();btcWsTestSocket=null}
+ $('btcWsTest').disabled=false;$('btcWsStop').disabled=true;
+}
+$('btcWsTest').addEventListener('click',()=>{
+ stopBtcWsTest();btcWsTestCount=0;$('btcWsLog').innerHTML='';
+ $('btcWsTest').disabled=true;$('btcWsStop').disabled=false;
+ const streams=['btcusdt@kline_3m','btcusdt@kline_5m','btcusdt@kline_15m'];
+ const socket=new WebSocket('wss://fstream.binance.com/ws');btcWsTestSocket=socket;
+ $('btcWsStatus').textContent='Connecting to Binance Futures…';
+ socket.onopen=()=>{logBtcWsTest('SOCKET OPEN','Sending subscriptions for BTCUSDT 3m, 5m, 15m');socket.send(JSON.stringify({method:'SUBSCRIBE',params:streams,id:987654}))};
+ socket.onmessage=event=>{
+  let msg;try{msg=JSON.parse(event.data)}catch(error){logBtcWsTest('PARSE ERROR',error.message);return}
+  if(msg&&msg.id===987654){logBtcWsTest(msg.error?'SUBSCRIPTION ERROR':'SUBSCRIPTION ACK',JSON.stringify(msg));return}
+  const payload=msg&&msg.data?msg.data:msg,k=payload&&payload.k;
+  if(k)logBtcWsTest(k.x?'CLOSED KLINE':'LIVE KLINE',k.s+' '+k.i+' close='+k.c+' closed='+k.x);
+  else logBtcWsTest('OTHER MESSAGE',JSON.stringify(payload).slice(0,250));
+ };
+ socket.onerror=()=>logBtcWsTest('SOCKET ERROR','Browser WebSocket error; inspect connection/network');
+ socket.onclose=event=>{logBtcWsTest('SOCKET CLOSED','code='+event.code+' reason='+(event.reason||'none'));btcWsTestSocket=null;$('btcWsTest').disabled=false;$('btcWsStop').disabled=true};
+});
+$('btcWsStop').addEventListener('click',stopBtcWsTest);
 </script>
 </body></html>
