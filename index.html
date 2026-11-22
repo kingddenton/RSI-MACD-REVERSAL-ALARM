@@ -97,7 +97,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 </details>
 <details class="panel monitor-panel" id="signalDiagnostics">
  <summary style="cursor:pointer;font-size:15px;font-weight:750;list-style:none">SIGNAL / QUALIFICATION DIAGNOSTICS</summary>
- <p class="note">Live RSI(14) qualification on closed 3m, 5m and 15m candles. A coin qualifies only when all three RSI values meet or exceed the editable threshold.</p>
+ <p class="note">Live RSI(14) qualification on closed 3m, 5m and 15m candles. A coin qualifies when any one timeframe meets or exceeds the editable threshold.</p>
  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0">
   <button id="btcWsTest" class="secondary">TEST BTC WEBSOCKET</button>
   <button id="btcWsStop" class="secondary" disabled>STOP TEST</button>
@@ -405,14 +405,20 @@ async function syncRsiWebSockets(universe){
   macdCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes:allCloses,lastClosedTime});
   return {qualified:evaluateClosedRsi(job.coin.symbol,job.interval,lastClosedTime)};
  });
- for(const coin of universe)updateMacdDiagnostic(coin.symbol);
+ // Reconcile every selected coin only after all three timeframe histories have been seeded.
+ // This makes the outcome box reflect the same complete data set as the full-universe RSI overview.
+ for(const coin of universe){
+  rsiLastEvaluated.delete(String(coin.symbol).toUpperCase()+'|ANY');
+  evaluateAllTimeframeRsi(coin.symbol);
+  updateMacdDiagnostic(coin.symbol);
+ }
  renderRsiOverview();
  const failures=seeded.output.filter(x=>x&&x.error);
  rsiCycleSeeded=seeded.done;rsiCycleErrors=failures.length;
  rsiScanStats.errors+=failures.length;
  const sampleError=failures.length?String(failures[0].error):'None';
  renderRsiDiagnostics();
- $('signalDiagnostics').querySelector('.note').textContent=failures.length?'RSI history seeding had '+failures.length+' errors in this cycle. First error: '+sampleError:'Live RSI(14) qualification requires RSI at or above the threshold on any one completed 3m, 5m or 15m candle. REST history is seeded only once per selected coin/timeframe.';
+ const signalNote=$('signalDiagnostics').querySelector('.note');if(signalNote)signalNote.textContent=failures.length?'RSI history seeding had '+failures.length+' errors in this cycle. First error: '+sampleError:'Live RSI(14) qualification requires RSI at or above the threshold on any one completed 3m, 5m or 15m candle. REST history is seeded only once per selected coin/timeframe.';
  $('perfCache').textContent=rsiSocketConnected?'WebSocket connected':'WebSocket connecting';$('perfJobs').textContent=String(rsiCandleHistory.size);$('perfJobResults').textContent=rsiCycleSeeded+' seeded / '+rsiCycleErrors+' errors';
  setStatus(failures.length?'RSI history seed failed: '+sampleError:'RSI WebSocket monitoring active · '+symbols.size+' coins · '+wanted.size+' streams · cached '+rsiCandleHistory.size+' histories.',!!failures.length);
 }
