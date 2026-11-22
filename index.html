@@ -136,7 +136,7 @@ function renderOutcomeBox(key){
  $(cfg.list).innerHTML=items.length?items.map(item=>{
   if(key==='qualified'){
    const values=item.details&&item.details.timeframes||{};
-   const rsiText=['3m','5m','15m'].map(tf=>tf.toUpperCase()+' '+(Number.isFinite(Number(values[tf]))?Number(values[tf]).toFixed(2):'—')).join('  |  ');
+   const rsiText=['3m','5m','15m'].map(tf=>Number.isFinite(Number(values[tf]))?Number(values[tf]).toFixed(2):'—').join('  |  ');
    return '<div class="outcome-item qualified-item"><span>'+item.symbol+'</span><span class="outcome-rsi">'+rsiText+'</span></div>';
   }
   return '<div class="outcome-item"><span>'+item.symbol+'</span><span class="outcome-time">'+item.time+'</span></div>';
