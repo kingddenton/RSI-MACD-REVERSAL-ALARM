@@ -240,7 +240,7 @@ async function getJson(url){
 }
 async function mapLimit(items,limit,fn){
  let next=0,active=0,peak=0,done=0;const output=new Array(items.length);
- async function worker(){while(!stopRequested){const index=next++;if(index>=items.length)return;active++;peak=Math.max(peak,active);try{output[index]=await fn(items[index])}catch(error){output[index]={error:error.message}}finally{active--;done++}}}
+ async function worker(){while(!stopRequested){const index=next++;if(index>=items.length)return;active++;peak=Math.max(peak,active);try{output[index]=await fn(items[index])}catch(error){output[index]={error:error.message}}finally{active--;done++;if(done%10===0||done===items.length)setStatus('Checking RSI candles: '+done+' / '+items.length+' timeframe checks completed…')}}}
  await Promise.all(Array.from({length:Math.min(Math.max(1,limit),items.length)},worker));
  return {output,done,peak};
 }
@@ -272,6 +272,11 @@ async function loadUniverse(){
   const beforeBottom=selectedMap.size;bottom.forEach(item=>{if(!selectedMap.has(item.symbol))selectedMap.set(item.symbol,item)});
   const overlap=top.length+bottom.length-selectedMap.size;
   const universe=[...selectedMap.values()].sort((a,b)=>a.change-b.change);
+  $('eligible').textContent=eligible.length;$('selected').textContent=universe.length;$('eligibleCount').textContent=eligible.length;
+  $('universeRule').textContent='Top '+top.length+' / Bottom '+bottom.length+' · 24H price change';
+  $('volumeRule').textContent=fmt(minVolume)+' USDT';renderUniverse(universe);
+  $('last').textContent=new Date().toLocaleTimeString();
+  setStatus('Universe loaded: '+universe.length+' coins. Checking closed-candle RSI on 3m, 5m and 15m…');
   await scanRsiContractions([...selectedMap.values()]);
   if(stopRequested)return;
   const topSet=new Set(top.map(x=>x.symbol)),bottomSet=new Set(bottom.map(x=>x.symbol));
