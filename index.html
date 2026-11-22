@@ -97,15 +97,15 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 </details>
 <details class="panel monitor-panel" id="signalDiagnostics">
  <summary style="cursor:pointer;font-size:15px;font-weight:750;list-style:none">SIGNAL / QUALIFICATION DIAGNOSTICS</summary>
- <p class="note">Live RSI(14) contraction qualification on closed 3m, 5m and 15m candles. A coin qualifies when any monitored timeframe meets the editable contraction count.</p>
+ <p class="note">Live RSI(14) qualification on closed 3m, 5m and 15m candles. A coin qualifies only when all three RSI values meet or exceed the editable threshold.</p>
  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0">
   <button id="btcWsTest" class="secondary">TEST BTC WEBSOCKET</button>
   <button id="btcWsStop" class="secondary" disabled>STOP TEST</button>
   <span id="btcWsStatus" class="muted">Test idle</span>
  </div>
  <div class="wrap" style="margin:10px 0"><table><thead><tr><th>TIME</th><th>MESSAGE</th><th>DETAIL</th></tr></thead><tbody id="btcWsLog"><tr><td colspan="3" class="muted">Run the isolated BTC test to inspect raw Binance events.</td></tr></tbody></table></div>
- <div class="stats"><span>Qualified coins: <b>Not active yet</b></span><span>Rejected coins: <b>Not active yet</b></span><span>Alarm transitions: <b>Not active yet</b></span></div>
- <div class="wrap" style="margin-top:10px"><table><thead><tr><th>Symbol</th><th>Stage</th><th>Timeframe</th><th>Observed value</th><th>Decision / reason</th></tr></thead><tbody><tr><td colspan="5" class="muted">Waiting for the first live RSI scan.</td></tr></tbody></table></div>
+ <div class="stats"><span>RSI evaluations: <b id="rsiEvalCount">0</b></span><span>Qualified: <b id="rsiQualifiedCount">0</b></span><span>Below threshold: <b id="rsiRejectedCount">0</b></span><span>Waiting for histories: <b id="rsiWaitingCount">0</b></span></div>
+ <div class="wrap" style="margin-top:10px"><table><thead><tr><th>Symbol</th><th>Stage</th><th>Timeframe</th><th>Observed value</th><th>Decision / reason</th></tr></thead><tbody id="rsiDecisionRows"><tr><td colspan="5" class="muted">Waiting for the first closed-candle evaluation.</td></tr></tbody></table></div>
 </details>
 
 <section class="panel">
@@ -180,6 +180,8 @@ window.ScannerOutcomeBoxes={qualify:qualifyCoin,evaluateRsiContraction,trigger:t
 let averageUniverseSeconds=0;
 const RSI_INTERVALS=['3m','5m','15m'], RSI_PERIOD=14, rsiLastEvaluated=new Map();
 let rsiScanStats={checked:0,qualified:0,errors:0};
+const rsiDecisionRows=new Map();
+const rsiDecisionStats={evaluations:0,qualified:0,rejected:0,waiting:0};
 function calculateRsiSeries(closes,period=RSI_PERIOD){
  const out=[]; if(closes.length<=period)return out;
  let gains=0,losses=0;
@@ -201,24 +203,54 @@ const rsiWsPending=new Map(),rsiWsAcked=new Set();
 let rsiWsAckErrors=0,rsiWsMessages=0,rsiWsKlineMessages=0,rsiWsClosedCandles=0,rsiWsLastMessage='Never',rsiWsLastEvent='None',rsiCycleSeeded=0,rsiCycleErrors=0;
 function rsiStreamName(symbol,interval){return symbol.toLowerCase()+'@kline_'+interval}
 function rsiHistoryKey(symbol,interval){return symbol+'|'+interval}
+function renderRsiDecisionDiagnostics(){
+ const rows=[...rsiDecisionRows.values()];
+ $('rsiEvalCount').textContent=String(rsiDecisionStats.evaluations);
+ $('rsiQualifiedCount').textContent=String(rsiDecisionStats.qualified);
+ $('rsiRejectedCount').textContent=String(rsiDecisionStats.rejected);
+ $('rsiWaitingCount').textContent=String(rsiDecisionStats.waiting);
+ $('rsiDecisionRows').innerHTML=rows.length?rows.map(row=>'<tr><td><b>'+row.symbol+'</b></td><td>'+row.stage+'</td><td>3m · 5m · 15m</td><td>'+row.values+'</td><td>'+row.reason+'</td></tr>').join(''):'<tr><td colspan="5" class="muted">Waiting for the first closed-candle evaluation.</td></tr>';
+}
+function recordRsiDecision(symbol,stage,readings,reason){
+ const key=String(symbol).toUpperCase(),values=RSI_INTERVALS.map(tf=>Number.isFinite(readings[tf])?readings[tf].toFixed(2):'—').join(' | ');
+ rsiDecisionRows.delete(key);
+ rsiDecisionRows.set(key,{symbol:key,stage,values,reason});
+ while(rsiDecisionRows.size>30)rsiDecisionRows.delete(rsiDecisionRows.keys().next().value);
+ renderRsiDecisionDiagnostics();
+}
 function evaluateAllTimeframeRsi(symbol){
  const threshold=Math.max(1,Math.min(99,Number($('rsiThreshold').value)||70));
  const readings={};
+ const missing=[];
  for(const interval of RSI_INTERVALS){
   const history=rsiCandleHistory.get(rsiHistoryKey(symbol,interval));
-  if(!history||history.closes.length<=RSI_PERIOD)return false;
+  if(!history||history.closes.length<=RSI_PERIOD){missing.push(interval);continue}
   const values=calculateRsiSeries(history.closes);
-  if(!values.length)return false;
+  if(!values.length){missing.push(interval);continue}
   readings[interval]=Number(values[values.length-1].toFixed(2));
+ }
+ rsiDecisionStats.evaluations++;
+ if(missing.length){
+  rsiDecisionStats.waiting++;
+  recordRsiDecision(symbol,'WAITING',readings,'Missing RSI history: '+missing.join(', '));
+  return false;
  }
  const signature=RSI_INTERVALS.map(interval=>rsiCandleHistory.get(rsiHistoryKey(symbol,interval)).lastClosedTime).join('|');
  const key=String(symbol).toUpperCase()+'|ALL3';
- if(RSI_INTERVALS.some(interval=>readings[interval]<threshold)){
+ const below=RSI_INTERVALS.filter(interval=>readings[interval]<threshold);
+ if(below.length){
   rsiLastEvaluated.delete(key);
+  rsiDecisionStats.rejected++;
+  recordRsiDecision(symbol,'REJECTED',readings,'Below '+threshold+' on '+below.join(', '));
   return false;
  }
- if(rsiLastEvaluated.get(key)===signature)return false;
+ if(rsiLastEvaluated.get(key)===signature){
+  recordRsiDecision(symbol,'ALREADY QUALIFIED',readings,'Same three closed-candle timestamps; no duplicate entry');
+  return false;
+ }
  rsiLastEvaluated.set(key,signature);
+ rsiDecisionStats.qualified++;
+ recordRsiDecision(symbol,'QUALIFIED',readings,'All three RSI values are at or above '+threshold);
  qualifyCoin(symbol,{reason:'RSI threshold reached on all three timeframes',timeframes:readings,threshold,rsiPeriod:RSI_PERIOD,source:'Binance Futures closed candles'});
  return true;
 }
@@ -241,6 +273,10 @@ function renderRsiDiagnostics(){
  '<span>Current-cycle seed errors: <b>'+rsiCycleErrors+'</b></span>'+
  '<span>Total bootstrap errors: <b>'+rsiScanStats.errors+'</b></span>'+
  '<span>Subscription errors: <b>'+rsiWsAckErrors+'</b></span>'+
+ '<span>RSI evaluations: <b>'+rsiDecisionStats.evaluations+'</b></span>'+
+ '<span>Qualified decisions: <b>'+rsiDecisionStats.qualified+'</b></span>'+
+ '<span>Below-threshold decisions: <b>'+rsiDecisionStats.rejected+'</b></span>'+
+ '<span>Waiting decisions: <b>'+rsiDecisionStats.waiting+'</b></span>'+
  '<span>Rule: <b>'+Math.max(1,Math.min(99,Number($('rsiThreshold').value)||70))+' RSI threshold across all 3 timeframes</b></span>';
 }
 function handleRsiSocketMessage(event){
