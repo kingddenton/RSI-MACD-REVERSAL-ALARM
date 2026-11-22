@@ -447,7 +447,7 @@ function setStatus(message,error=false){$('status').textContent=message;$('statu
 function setRunning(active){$('start').classList.toggle('running',active);$('start').textContent=active?'Scanning…':'Start scanning'}
 function settings(){return {topCount:$('topCount').value,bottomCount:$('bottomCount').value,volume:$('volume').value,workers:$('workers').value,refresh:$('refresh').value}}
 function saveSettings(){try{const saved=settings();saved.rsiThreshold=$('rsiThreshold').value;localStorage.setItem(STORE,JSON.stringify(saved));setStatus('Settings saved in this browser.')}catch(e){setStatus('Could not save settings in this browser.',true)}}
-function loadSettings(){try{const s=JSON.parse(localStorage.getItem(STORE)||'{}');for(const [k,v] of Object.entries(s))if($(k))$(k).value=v;if(s.rsiThreshold===undefined&&s.rsiContractions!==undefined)$('rsiThreshold').value='70'}catch(e){}}
+function loadSettings(){try{const s=JSON.parse(localStorage.getItem(STORE)||'{}');for(const k of ['topCount','bottomCount','volume','workers','refresh','rsiThreshold'])if(s[k]!==undefined&&$(k))$(k).value=s[k]}catch(e){}}
 async function acquireRequestSlot(){
  while(Date.now()<rateLimitUntil)await sleep(Math.min(1000,rateLimitUntil-Date.now()));
  if(activeRequests<requestConcurrency){activeRequests++;diagnostics.peakRequests=Math.max(diagnostics.peakRequests,activeRequests);return}
