@@ -323,7 +323,7 @@ function calculateRsiSeries(closes,period=RSI_PERIOD){
 const rsiCandleHistory=new Map();
 const macdCandleHistory=new Map();
 
-const rsiCandleCache=new Map(),rsiCandleWsFresh=new Map();
+const rsiCandleCache=new Map(),rsiCandleWsFresh=new Map(),rsiCandleRestSync=new Map();
 function rsiIntervalMs(tf){return ({'1m':60000,'3m':180000,'5m':300000,'15m':900000})[tf]||60000}
 function cacheRsiKlineEvent(k){
  if(!k||!k.s||!k.i)return;
@@ -332,25 +332,32 @@ function cacheRsiKlineEvent(k){
  const rows=rsiCandleCache.get(key)||[],index=rows.findIndex(x=>Number(x[0])===row[0]);
  if(index>=0)rows[index]=row;else rows.push(row);
  rows.sort((a,b)=>Number(a[0])-Number(b[0]));if(rows.length>100)rows.splice(0,rows.length-100);
- rsiCandleCache.set(key,rows);rsiCandleWsFresh.set(key,Date.now());
+ rsiCandleCache.set(key,rows);
+ // Only an actual WebSocket kline event may refresh WebSocket freshness.
+ rsiCandleWsFresh.set(key,Date.now());
 }
 async function getRsiCachedKlines(symbol,tf){
- const key=rsiHistoryKey(symbol,tf),cached=rsiCandleCache.get(key),freshAt=rsiCandleWsFresh.get(key);
- if(cached&&cached.length>=40&&freshAt&&Date.now()-freshAt<rsiIntervalMs(tf)*2)return cached;
+ const key=rsiHistoryKey(symbol,tf),cached=rsiCandleCache.get(key),now=Date.now(),freshAt=rsiCandleWsFresh.get(key),restAt=rsiCandleRestSync.get(key);
+ if(cached&&cached.length>=40&&freshAt&&now-freshAt<rsiIntervalMs(tf)*2)return cached;
+ // A REST seed/recovery is not evidence that the WebSocket is alive. Throttle fallback
+ // refreshes independently so a silent stream cannot cause REST calls on every scan cycle.
+ if(cached&&cached.length>=40&&restAt&&now-restAt<30000)return cached;
+ let rows;
  if(!cached||cached.length<40){
-  const rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+tf+'&limit=100');
+  rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+tf+'&limit=100');
   if(!Array.isArray(rows)||!rows.length)throw new Error('Binance returned no candle history for '+symbol+' '+tf);
-  const merged=new Map(rows.map(row=>[Number(row[0]),row]));for(const row of cached||[])merged.set(Number(row[0]),row);
-  const full=[...merged.values()].sort((a,b)=>Number(a[0])-Number(b[0])).slice(-100);
-  rsiCandleCache.set(key,full);rsiCandleWsFresh.set(key,Date.now());return full;
+ }else{
+  rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+tf+'&startTime='+Number(cached[cached.length-1][0])+'&limit=100');
+  if(!Array.isArray(rows))rows=[];
+  if(rows.length>=100)rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+tf+'&limit=100');
  }
- let rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+tf+'&startTime='+Number(cached[cached.length-1][0])+'&limit=100');
- if(!Array.isArray(rows))rows=[];
- if(rows.length>=100)rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+tf+'&limit=100');
- const merged=new Map(cached.map(row=>[Number(row[0]),row]));for(const row of rows)merged.set(Number(row[0]),row);
+ // Merge REST recovery first, then the latest live cache so a concurrent WebSocket
+ // update cannot be overwritten by an older REST response.
+ const latestCache=rsiCandleCache.get(key)||cached||[],merged=new Map(rows.map(row=>[Number(row[0]),row]));
+ for(const row of latestCache)merged.set(Number(row[0]),row);
  const updated=[...merged.values()].sort((a,b)=>Number(a[0])-Number(b[0])).slice(-100);
  if(updated.length<40)throw new Error('Incomplete candle history for '+symbol+' '+tf+': '+updated.length+' candles');
- rsiCandleCache.set(key,updated);rsiCandleWsFresh.set(key,Date.now());return updated;
+ rsiCandleCache.set(key,updated);rsiCandleRestSync.set(key,Date.now());return updated;
 }
 function applyRsiHistoryRows(symbol,tf,rows){
  const closed=rows.filter(row=>Number(row[6])<Date.now()).slice(-100);if(!closed.length)return false;
@@ -361,7 +368,7 @@ function applyRsiHistoryRows(symbol,tf,rows){
  if(tf===MACD_ALERT_INTERVAL&&!macdAlertState.has(symbol)){const macd=calculateMacdDiagnostic(closes);if(macd)macdAlertState.set(symbol,{hist:macd.hist,lastClosedTime});}
  return true;
 }
-let rsiSocket=null,rsiSocketConnected=false,rsiSocketWanted=new Set(),rsiReconnectTimer=null,rsiWsMessageId=1;
+let rsiSocket=null,rsiSocketConnected=false,rsiSocketWanted=new Set(),rsiReconnectTimer=null,rsiWsWatchdogTimer=null,rsiReconnectDelay=1000,rsiLastMessageAt=0,rsiWsMessageId=1;
 const rsiWsPending=new Map(),rsiWsAcked=new Set();
 let rsiWsAckErrors=0,rsiWsMessages=0,rsiWsKlineMessages=0,rsiWsClosedCandles=0,rsiWsLastMessage='Never',rsiWsLastEvent='None',rsiCycleSeeded=0,rsiCycleErrors=0;
 function rsiStreamName(symbol,interval){return symbol.toLowerCase()+'@kline_'+interval}
@@ -466,7 +473,7 @@ function renderRsiDiagnostics(){
 
 function handleRsiSocketMessage(event){
  let msg;try{msg=JSON.parse(event.data)}catch(e){return}if(msg&&msg.data)msg=msg.data;
- rsiWsMessages++;rsiWsLastMessage=new Date().toLocaleTimeString();
+ rsiWsMessages++;rsiLastMessageAt=Date.now();rsiReconnectDelay=1000;rsiWsLastMessage=new Date().toLocaleTimeString();
  if(msg&&Object.prototype.hasOwnProperty.call(msg,'id')){
   const pending=rsiWsPending.get(msg.id);
   if(pending){rsiWsPending.delete(msg.id);if(msg.error)rsiWsAckErrors+=pending.streams.length;else pending.streams.forEach(stream=>rsiWsAcked.add(stream));rsiWsLastEvent=msg.error?'SUBSCRIPTION ERROR':'SUBSCRIPTION ACK';}
@@ -506,18 +513,38 @@ function handleRsiSocketMessage(event){
  updateMacdDiagnostic(symbol);renderRsiOverview();renderRsiDiagnostics();
 }
 function sendRsiSubscription(method,streams){
- if(!rsiSocketConnected||!streams.length)return;
- const id=rsiWsMessageId++;
+ if(!rsiSocketConnected||!streams.length||!rsiSocket||rsiSocket.readyState!==WebSocket.OPEN)return;
+ const id=rsiWsMessageId++,socket=rsiSocket;
  rsiWsPending.set(id,{method,streams});
- rsiSocket.send(JSON.stringify({method,params:streams,id}));
+ try{socket.send(JSON.stringify({method,params:streams,id}))}catch(error){rsiWsPending.delete(id);rsiWsAckErrors+=streams.length;$('perfStatus').textContent='WebSocket subscription send failed: '+error.message}
+}
+function scheduleRsiWsWatchdog(socket){
+ clearTimeout(rsiWsWatchdogTimer);
+ rsiWsWatchdogTimer=setTimeout(()=>{
+  if(rsiSocket!==socket||socket.readyState!==WebSocket.OPEN||!rsiSocketWanted.size)return;
+  const silentFor=Date.now()-(rsiLastMessageAt||0);
+  if(silentFor>=45000){$('perfStatus').textContent='RSI WebSocket silent for '+Math.round(silentFor/1000)+'s; forcing reconnect.';try{socket.close()}catch(error){}}
+  else scheduleRsiWsWatchdog(socket);
+ },45000);
 }
 function connectRsiSocket(){
+ if(!rsiSocketWanted.size||stopRequested)return;
  if(rsiSocket&&[WebSocket.CONNECTING,WebSocket.OPEN].includes(rsiSocket.readyState))return;
- clearTimeout(rsiReconnectTimer);rsiSocket=new WebSocket('wss://fstream.binance.com/market/ws');
- rsiSocket.onopen=()=>{rsiSocketConnected=true;rsiWsAcked.clear();const streams=[...rsiSocketWanted];for(let i=0;i<streams.length;i+=100)sendRsiSubscription('SUBSCRIBE',streams.slice(i,i+100));setStatus('RSI WebSocket connected · monitoring '+rsiSocketWanted.size+' candle streams.')};
- rsiSocket.onmessage=handleRsiSocketMessage;
- rsiSocket.onerror=()=>{$('perfStatus').textContent='RSI WebSocket connection error; reconnecting…'};
- rsiSocket.onclose=()=>{rsiSocketConnected=false;rsiSocket=null;if(rsiSocketWanted.size&&!stopRequested)rsiReconnectTimer=setTimeout(connectRsiSocket,5000)};
+ clearTimeout(rsiReconnectTimer);clearTimeout(rsiWsWatchdogTimer);
+ const socket=new WebSocket('wss://fstream.binance.com/market/ws');rsiSocket=socket;rsiSocketConnected=false;
+ socket.onopen=()=>{
+  if(rsiSocket!==socket)return;
+  rsiSocketConnected=true;rsiWsAcked.clear();rsiLastMessageAt=Date.now();
+  const streams=[...rsiSocketWanted];for(let i=0;i<streams.length;i+=100)sendRsiSubscription('SUBSCRIBE',streams.slice(i,i+100));
+  setStatus('RSI WebSocket connected · monitoring '+rsiSocketWanted.size+' candle streams.');scheduleRsiWsWatchdog(socket);
+ };
+ socket.onmessage=event=>{if(rsiSocket===socket){handleRsiSocketMessage(event);scheduleRsiWsWatchdog(socket)}};
+ socket.onerror=()=>{if(rsiSocket===socket)$('perfStatus').textContent='RSI WebSocket connection error; awaiting reconnect.'};
+ socket.onclose=()=>{
+  if(rsiSocket!==socket)return;
+  rsiSocketConnected=false;rsiSocket=null;clearTimeout(rsiWsWatchdogTimer);rsiWsPending.clear();rsiWsAcked.clear();
+  if(rsiSocketWanted.size&&!stopRequested){const delay=rsiReconnectDelay;rsiReconnectDelay=Math.min(rsiReconnectDelay*2,30000);$('perfStatus').textContent='RSI WebSocket disconnected; reconnecting in '+Math.ceil(delay/1000)+'s.';rsiReconnectTimer=setTimeout(connectRsiSocket,delay)}
+ };
 }
 async function syncRsiWebSockets(universe){
  rsiOverviewSymbols=universe.map(x=>x.symbol);
@@ -565,7 +592,7 @@ async function syncRsiWebSockets(universe){
  $('perfCache').textContent=rsiSocketConnected?'WebSocket connected':'WebSocket connecting';$('perfJobs').textContent=String(rsiCandleHistory.size);$('perfJobResults').textContent=rsiCycleSeeded+' seeded / '+rsiCycleErrors+' errors';
  setStatus(failures.length?'RSI history seed failed: '+sampleError:'RSI WebSocket monitoring active · '+symbols.size+' coins · '+wanted.size+' streams · cached '+rsiCandleHistory.size+' histories.',!!failures.length);
 }
-function stopRsiWebSockets(){clearTimeout(rsiReconnectTimer);rsiSocketWanted.clear();if(rsiSocket){try{rsiSocket.close()}catch(e){}}rsiSocket=null;rsiSocketConnected=false}
+function stopRsiWebSockets(){clearTimeout(rsiReconnectTimer);clearTimeout(rsiWsWatchdogTimer);rsiSocketWanted.clear();rsiWsPending.clear();rsiWsAcked.clear();const socket=rsiSocket;rsiSocket=null;rsiSocketConnected=false;if(socket){try{socket.close()}catch(e){}}}
 window.addEventListener('beforeunload',stopRsiWebSockets);
 
 const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
