@@ -508,7 +508,13 @@ async function syncRsiWebSockets(universe){
  rsiSocketWanted=wanted;
  if(rsiSocketConnected){for(let i=0;i<removed.length;i+=100)sendRsiSubscription('UNSUBSCRIBE',removed.slice(i,i+100));for(let i=0;i<added.length;i+=100)sendRsiSubscription('SUBSCRIBE',added.slice(i,i+100))}
  else if(wanted.size)connectRsiSocket();
- const jobs=universe.flatMap(coin=>MONITOR_INTERVALS.filter(interval=>interval===MACD_ALERT_INTERVAL||ST_INTERVALS.includes(interval)||EMA_ALERT_INTERVALS.includes(interval)?!macdCandleHistory.has(rsiHistoryKey(coin.symbol,interval)):!rsiCandleHistory.has(rsiHistoryKey(coin.symbol,interval))).map(interval=>({coin,interval})));
+ const jobs=universe.flatMap(coin=>MONITOR_INTERVALS.filter(interval=>{
+  const key=rsiHistoryKey(coin.symbol,interval);
+  const needsRsi=RSI_INTERVALS.includes(interval)&&!rsiCandleHistory.has(key);
+  const needsIndicator=MACD_DIAGNOSTIC_INTERVALS.includes(interval)||interval===MACD_ALERT_INTERVAL||ST_INTERVALS.includes(interval)||EMA_ALERT_INTERVALS.includes(interval);
+  const needsIndicatorHistory=needsIndicator&&!macdCandleHistory.has(key);
+  return needsRsi||needsIndicatorHistory;
+ }).map(interval=>({coin,interval})));
  for(const symbol of [...diagnosticOnlySymbols,...qualifiedOnlySymbols])if(!macdCandleHistory.has(rsiHistoryKey(symbol,MACD_ALERT_INTERVAL)))jobs.push({coin:{symbol},interval:MACD_ALERT_INTERVAL});
  const required=3;
  const seeded=await mapLimit(jobs,requestConcurrency,async job=>{
