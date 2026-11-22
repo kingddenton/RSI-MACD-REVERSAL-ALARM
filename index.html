@@ -72,7 +72,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;colo
 const API='https://fapi.binance.com';
 const $=id=>document.getElementById(id);
 const perf={requests:0,success:0,failed:0,rateLimits:0,responseMs:0,activeWorkers:0,peakWorkers:0,lastSuccess:0,lastLatency:null,cycles:[],latest:{scanned:0,duration:0,speed:0,failed:0}};
-const state={running:false,scanBusy:false,monitorBusy:false,universe:[],qualified:new Map(),alarms:[],timer:null,monitorTimer:null,exchangeReady:false};
+const state={running:false,scanBusy:false,universe:[],qualified:new Map(),alarms:[],timer:null,ws:null,wsReconnectTimer:null,wsBackoff:1000,wsRequestId:0,wsSubs:new Set(),exchangeReady:false};
 const settings=()=>({period:clamp(+$('rsiPeriod').value,2,50,14),r3:clamp(+$('rsi3').value,1,99,70),r5:clamp(+$('rsi5').value,1,99,70),r15:clamp(+$('rsi15').value,1,99,70),max:clamp(+$('maxCoins').value,1,50,20),volume:Math.max(0,+$('minVolume').value||0)});
 function clamp(v,min,max,def){return Number.isFinite(v)?Math.min(max,Math.max(min,v)):def}
 function log(msg){const d=document.createElement('div');d.textContent=new Date().toLocaleTimeString()+' · '+msg;$('log').prepend(d);while($('log').children.length>40)$('log').lastChild.remove()}
@@ -97,11 +97,11 @@ async function qualifySymbol(t){
  const vals=[['3M',rsi(a,s.period),s.r3],['5M',rsi(b,s.period),s.r5],['15M',rsi(c,s.period),s.r15]];
  const hit=vals.filter(x=>x[1]!==null&&x[1]>=x[2]).sort((x,y)=>(y[1]-y[2])-(x[1]-x[2]))[0];
  if(!hit)return;
- const m=macd(await klines(symbol,'1m',100));
- if(!m)return;
- state.qualified.set(symbol,{symbol,tf:hit[0],rsi:hit[1],qualifiedAt:Date.now(),lastHistTime:m.candleTime,lastColor:m.color,displayColor:m.color});
- log(symbol+' qualified on '+hit[0]+' RSI ('+hit[1].toFixed(1)+'). 1M MACD monitoring started.');
- render();
+ const rows=closed(await klines(symbol,'1m',100));
+ const m=macd(rows);if(!m)return;
+ state.qualified.set(symbol,{symbol,tf:hit[0],rsi:hit[1],qualifiedAt:Date.now(),lastHistTime:m.candleTime,lastColor:m.color,displayColor:m.color,macdRows:rows});
+ log(symbol+' qualified on '+hit[0]+' RSI ('+hit[1].toFixed(1)+'). 1M WebSocket monitoring started.');
+ if(state.running)syncWebSocketSubscriptions();render();
 }
 async function scan(){
  if(state.scanBusy)return;state.scanBusy=true;setStatus('Scanning…');const started=performance.now();let failedBefore=perf.failed,scanned=0;
@@ -109,19 +109,48 @@ async function scan(){
  catch(e){log('Scan error: '+e.message);setStatus('Connection error',false)}
  finally{const duration=performance.now()-started;const cycle={time:Date.now(),scanned,duration,speed:duration>0?scanned/(duration/1000):0,failed:perf.failed-failedBefore};perf.latest={scanned,duration,speed:cycle.speed,failed:cycle.failed};perf.cycles.unshift(cycle);perf.cycles=perf.cycles.slice(0,10);state.scanBusy=false;renderPerformance();if(state.running)setStatus('Monitoring')}
 }
-async function monitor(){
- if(state.monitorBusy||!state.qualified.size)return;state.monitorBusy=true;
- try{const list=[...state.qualified.values()];await mapLimit(list,8,async q=>{
-  const m=macd(await klines(q.symbol,'1m',100));if(!m||m.candleTime<=q.lastHistTime)return;
-  q.lastHistTime=m.candleTime;q.displayColor=m.color;
-  if(q.lastColor==='green'&&m.color==='red'){
-   const detectedAt=Date.now();const alarm={...q,alarmAt:detectedAt,hist:m.hist,latency:Math.max(0,detectedAt-(m.candleTime+1))};perf.lastLatency=alarm.latency;state.alarms.unshift(alarm);state.qualified.delete(q.symbol);playAlarm();log('ALARM: '+q.symbol+' 1M MACD histogram turned green → red ('+formatMs(alarm.latency)+' after candle close).');}
-  else q.lastColor=m.color;
- });render()}catch(e){log('1M monitor error: '+e.message)}finally{state.monitorBusy=false}
+function syncWebSocketSubscriptions(){
+ if(!state.running||!state.qualified.size){if(!state.qualified.size)closeWebSocket();return}
+ const ws=state.ws;
+ if(!ws||ws.readyState!==WebSocket.OPEN)return;
+ const wanted=new Set([...state.qualified.keys()].map(s=>s.toLowerCase()+'@kline_1m'));
+ const add=[...wanted].filter(x=>!state.wsSubs.has(x)),remove=[...state.wsSubs].filter(x=>!wanted.has(x));
+ if(remove.length){ws.send(JSON.stringify({method:'UNSUBSCRIBE',params:remove,id:++state.wsRequestId}));remove.forEach(x=>state.wsSubs.delete(x))}
+ if(add.length){ws.send(JSON.stringify({method:'SUBSCRIBE',params:add,id:++state.wsRequestId}));add.forEach(x=>state.wsSubs.add(x))}
+ renderPerformance();
+}
+function connectWebSocket(){
+ if(!state.running||!state.qualified.size||state.ws&&[WebSocket.OPEN,WebSocket.CONNECTING].includes(state.ws.readyState))return;
+ clearTimeout(state.wsReconnectTimer);setTransport('WebSocket connecting…');
+ try{
+  const ws=new WebSocket('wss://fstream.binance.com/ws');state.ws=ws;
+  ws.onopen=()=>{state.wsBackoff=1000;state.wsSubs.clear();setTransport('WebSocket connected');log('Binance Futures WebSocket connected.');syncWebSocketSubscriptions()};
+  ws.onmessage=ev=>{let msg;try{msg=JSON.parse(ev.data)}catch{return}if(msg.e==='kline'&&msg.k&&msg.k.i==='1m'&&msg.k.x)handleClosedKline(msg.s,msg.k)};
+  ws.onerror=()=>setTransport('WebSocket error · reconnecting');
+  ws.onclose=()=>{state.ws=null;state.wsSubs.clear();setTransport('WebSocket disconnected');if(state.running&&state.qualified.size){const wait=state.wsBackoff;state.wsBackoff=Math.min(30000,state.wsBackoff*2);state.wsReconnectTimer=setTimeout(connectWebSocket,wait)}};
+ }catch(e){setTransport('WebSocket unavailable');log('WebSocket setup error: '+e.message)}
+}
+function closeWebSocket(){clearTimeout(state.wsReconnectTimer);state.wsReconnectTimer=null;if(state.ws){const ws=state.ws;state.ws=null;ws.onclose=null;try{ws.close()}catch(e){}}state.wsSubs.clear();setTransport('WebSocket stopped')}
+function setTransport(label){const el=$('pTransport');if(el)el.textContent='Data transport: '+label}
+function handleClosedKline(symbol,k){
+ const q=state.qualified.get(symbol);if(!q)return;
+ const row=[k.t,k.o,k.h,k.l,k.c,k.v,k.T,k.q,k.n,k.V,k.Q,k.B];
+ if(q.macdRows.some(x=>+x[0]===+k.t))return;
+ q.macdRows.push(row);if(q.macdRows.length>120)q.macdRows.shift();
+ const m=macd(q.macdRows);if(!m||m.candleTime<=q.lastHistTime)return;
+ q.lastHistTime=m.candleTime;q.displayColor=m.color;
+ if(q.lastColor==='green'&&m.color==='red'){
+  const detectedAt=Date.now(),latency=Math.max(0,detectedAt-(+k.T));perf.lastLatency=latency;
+  const alarm={symbol:q.symbol,tf:q.tf,rsi:q.rsi,qualifiedAt:q.qualifiedAt,alarmAt:detectedAt,hist:m.hist,latency};
+  state.alarms.unshift(alarm);state.qualified.delete(symbol);playAlarm();
+  log('ALARM: '+symbol+' 1M MACD histogram turned green → red ('+formatMs(latency)+' after candle close).');
+  syncWebSocketSubscriptions();
+ }else q.lastColor=m.color;
+ render();renderPerformance();
 }
 function playAlarm(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;const c=new C();[660,880,660].forEach((f,i)=>{const o=c.createOscillator(),g=c.createGain();o.frequency.value=f;o.type='sine';g.gain.setValueAtTime(.0001,c.currentTime+i*.22);g.gain.exponentialRampToValueAtTime(.16,c.currentTime+i*.22+.025);g.gain.exponentialRampToValueAtTime(.0001,c.currentTime+i*.22+.18);o.connect(g);g.connect(c.destination);o.start(c.currentTime+i*.22);o.stop(c.currentTime+i*.22+.2)});setTimeout(()=>c.close(),1200)}catch(e){log('Audio unavailable; check browser sound permissions')}}
 function formatMs(ms){return ms==null?'—':ms<1000?Math.round(ms)+' ms':(ms/1000).toFixed(1)+' s'}
-function renderPerformance(){const set=(id,v)=>{const el=$(id);if(el)el.textContent=v};const p=perf.latest;set('pScanned',p.scanned);set('pSpeed',p.scanned?p.speed.toFixed(2):'—');set('pDuration',p.scanned?formatMs(p.duration):'—');set('pWorkers',perf.activeWorkers+' / '+perf.peakWorkers);set('pQualified',state.qualified.size);set('pLatency',formatMs(perf.lastLatency));set('pRequests',perf.requests);set('pResponse',perf.requests?(perf.responseMs/Math.max(1,perf.requests)).toFixed(0)+' ms':'—');set('pSuccess',perf.success);set('pFailed',perf.failed);set('pRate',perf.rateLimits);set('pLastSuccess','Last successful API response: '+(perf.lastSuccess?new Date(perf.lastSuccess).toLocaleTimeString():'—'));set('pTransport','Data transport: REST polling · WebSocket not connected');set('perfUpdated',perf.cycles.length?'Updated '+new Date().toLocaleTimeString():'Waiting for first scan');const body=$('perfHistory');if(body){body.replaceChildren();if(!perf.cycles.length){const tr=document.createElement('tr'),td=cell('No scan cycles recorded yet','empty');td.colSpan=5;tr.append(td);body.append(tr)}else perf.cycles.forEach(x=>{const tr=document.createElement('tr');tr.append(cell(new Date(x.time).toLocaleTimeString()),cell(x.scanned),cell(formatMs(x.duration)),cell(x.speed.toFixed(2)),cell(x.failed));body.append(tr)})}}
+function renderPerformance(){const set=(id,v)=>{const el=$(id);if(el)el.textContent=v};const p=perf.latest;set('pScanned',p.scanned);set('pSpeed',p.scanned?p.speed.toFixed(2):'—');set('pDuration',p.scanned?formatMs(p.duration):'—');set('pWorkers',perf.activeWorkers+' / '+perf.peakWorkers);set('pQualified',state.qualified.size);set('pLatency',formatMs(perf.lastLatency));set('pRequests',perf.requests);set('pResponse',perf.requests?(perf.responseMs/Math.max(1,perf.requests)).toFixed(0)+' ms':'—');set('pSuccess',perf.success);set('pFailed',perf.failed);set('pRate',perf.rateLimits);set('pLastSuccess','Last successful API response: '+(perf.lastSuccess?new Date(perf.lastSuccess).toLocaleTimeString():'—'));set('pTransport','Data transport: '+(state.ws&&state.ws.readyState===WebSocket.OPEN?'WebSocket connected':'WebSocket waiting'));set('perfUpdated',perf.cycles.length?'Updated '+new Date().toLocaleTimeString():'Waiting for first scan');const body=$('perfHistory');if(body){body.replaceChildren();if(!perf.cycles.length){const tr=document.createElement('tr'),td=cell('No scan cycles recorded yet','empty');td.colSpan=5;tr.append(td);body.append(tr)}else perf.cycles.forEach(x=>{const tr=document.createElement('tr');tr.append(cell(new Date(x.time).toLocaleTimeString()),cell(x.scanned),cell(formatMs(x.duration)),cell(x.speed.toFixed(2)),cell(x.failed));body.append(tr)})}}
 function cell(v,cls=''){const td=document.createElement('td');td.textContent=v; if(cls)td.className=cls;return td}
 function render(){
  const q=$('qualified'),a=$('alarms');q.replaceChildren();a.replaceChildren();
@@ -132,8 +161,8 @@ function render(){
  state.alarms.forEach(x=>{const tr=document.createElement('tr');tr.className='alarmrow';tr.append(cell(x.symbol,'coin'),cell(x.tf),cell(x.rsi.toFixed(1)),cell('GREEN → RED','red'),cell(new Date(x.alarmAt).toLocaleTimeString()));a.append(tr)});
  $('qualifiedCount').textContent=qs.length+' monitoring';$('alarmCount').textContent=state.alarms.length+' alarms';renderPerformance();
 }
-function start(){if(state.running)return;state.running=true;$('start').disabled=true;$('stop').disabled=false;setStatus('Starting…');scan();state.timer=setInterval(scan,30000);state.monitorTimer=setInterval(monitor,12000);log('Monitoring started. RSI universe refresh: 30s; qualified 1M MACD checks: 12s.')}
-function stop(){state.running=false;clearInterval(state.timer);clearInterval(state.monitorTimer);$('start').disabled=false;$('stop').disabled=true;setStatus('Stopped',false);log('Monitoring stopped. Existing qualified coins and alarms are retained.')}
+function start(){if(state.running)return;state.running=true;$('start').disabled=true;$('stop').disabled=false;setStatus('Starting…');connectWebSocket();scan();state.timer=setInterval(scan,30000);log('Monitoring started. RSI universe refresh: 30s; qualified 1M MACD updates: Binance WebSocket.')}
+function stop(){state.running=false;clearInterval(state.timer);closeWebSocket();$('start').disabled=false;$('stop').disabled=true;setStatus('Stopped',false);log('Monitoring stopped. Existing qualified coins and alarms are retained.')}
 function save(){localStorage.setItem('rsiMacdReversalSettings',JSON.stringify(settings()));log('Settings saved on this device.')}
 function load(){try{const s=JSON.parse(localStorage.getItem('rsiMacdReversalSettings')||'null');if(s){$('rsiPeriod').value=s.period;$('rsi3').value=s.r3;$('rsi5').value=s.r5;$('rsi15').value=s.r15;$('maxCoins').value=String(s.max);$('minVolume').value=s.volume}}catch(e){}}
 $('start').addEventListener('click',start);$('stop').addEventListener('click',stop);$('once').addEventListener('click',scan);$('save').addEventListener('click',save);$('clear').addEventListener('click',()=>{state.alarms=[];render();log('Alarm history cleared.')});load();render();renderPerformance();
