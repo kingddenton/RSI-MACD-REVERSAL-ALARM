@@ -261,8 +261,7 @@ function recordRsiDecision(symbol,stage,readings,reason){
 }
 function evaluateAllTimeframeRsi(symbol){
  const threshold=Math.max(1,Math.min(99,Number($('rsiThreshold').value)||70));
- const readings={};
- const missing=[];
+ const readings={},missing=[];
  for(const interval of RSI_INTERVALS){
   const history=rsiCandleHistory.get(rsiHistoryKey(symbol,interval));
   if(!history||history.closes.length<=RSI_PERIOD){missing.push(interval);continue}
@@ -271,28 +270,28 @@ function evaluateAllTimeframeRsi(symbol){
   readings[interval]=Number(values[values.length-1].toFixed(2));
  }
  rsiDecisionStats.evaluations++;
- if(missing.length){
+ const qualifying=RSI_INTERVALS.filter(interval=>Number.isFinite(readings[interval])&&readings[interval]>=threshold);
+ if(!qualifying.length&&missing.length){
   rsiDecisionStats.waiting++;
-  recordRsiDecision(symbol,'WAITING',readings,'Missing RSI history: '+missing.join(', '));
+  recordRsiDecision(symbol,'WAITING',readings,'No available timeframe reached '+threshold+'; missing history: '+missing.join(', '));
   return false;
  }
- const signature=RSI_INTERVALS.map(interval=>rsiCandleHistory.get(rsiHistoryKey(symbol,interval)).lastClosedTime).join('|');
- const key=String(symbol).toUpperCase()+'|ALL3';
- const below=RSI_INTERVALS.filter(interval=>readings[interval]<threshold);
- if(below.length){
-  rsiLastEvaluated.delete(key);
+ if(!qualifying.length){
+  rsiLastEvaluated.delete(String(symbol).toUpperCase()+'|ANY');
   rsiDecisionStats.rejected++;
-  recordRsiDecision(symbol,'REJECTED',readings,'Below '+threshold+' on '+below.join(', '));
+  recordRsiDecision(symbol,'REJECTED',readings,'Below '+threshold+' on all three timeframes');
   return false;
  }
+ const signature=RSI_INTERVALS.filter(interval=>Number.isFinite(readings[interval])).map(interval=>interval+':'+rsiCandleHistory.get(rsiHistoryKey(symbol,interval)).lastClosedTime).join('|');
+ const key=String(symbol).toUpperCase()+'|ANY';
  if(rsiLastEvaluated.get(key)===signature){
-  recordRsiDecision(symbol,'ALREADY QUALIFIED',readings,'Same three closed-candle timestamps; no duplicate entry');
+  recordRsiDecision(symbol,'ALREADY QUALIFIED',readings,'Same qualifying closed-candle data; no duplicate entry');
   return false;
  }
  rsiLastEvaluated.set(key,signature);
  rsiDecisionStats.qualified++;
- recordRsiDecision(symbol,'QUALIFIED',readings,'All three RSI values are at or above '+threshold);
- qualifyCoin(symbol,{reason:'RSI threshold reached on all three timeframes',timeframes:readings,threshold,rsiPeriod:RSI_PERIOD,source:'Binance Futures closed candles'});
+ recordRsiDecision(symbol,'QUALIFIED',readings,'Threshold reached on '+qualifying.join(' OR '));
+ qualifyCoin(symbol,{reason:'RSI threshold reached on any one timeframe',timeframes:readings,qualifyingTimeframes:qualifying,threshold,rsiPeriod:RSI_PERIOD,source:'Binance Futures closed candles'});
  return true;
 }
 function evaluateClosedRsi(symbol,interval,closedTime){
@@ -318,7 +317,7 @@ function renderRsiDiagnostics(){
  '<span>Qualified decisions: <b>'+rsiDecisionStats.qualified+'</b></span>'+
  '<span>Below-threshold decisions: <b>'+rsiDecisionStats.rejected+'</b></span>'+
  '<span>Waiting decisions: <b>'+rsiDecisionStats.waiting+'</b></span>'+
- '<span>Rule: <b>'+Math.max(1,Math.min(99,Number($('rsiThreshold').value)||70))+' RSI threshold across all 3 timeframes</b></span>';
+ '<span>Rule: <b>'+Math.max(1,Math.min(99,Number($('rsiThreshold').value)||70))+' RSI threshold on any 1 of 3 timeframes</b></span>';
 }
 function handleRsiSocketMessage(event){
  let msg;try{msg=JSON.parse(event.data)}catch(e){return}
@@ -384,7 +383,7 @@ async function syncRsiWebSockets(universe){
  rsiScanStats.errors+=failures.length;
  const sampleError=failures.length?String(failures[0].error):'None';
  renderRsiDiagnostics();
- $('signalDiagnostics').querySelector('.note').textContent=failures.length?'RSI history seeding had '+failures.length+' errors in this cycle. First error: '+sampleError:'Live RSI(14) qualification requires RSI at or above the threshold on completed 3m, 5m and 15m candles. REST history is seeded only once per selected coin/timeframe.';
+ $('signalDiagnostics').querySelector('.note').textContent=failures.length?'RSI history seeding had '+failures.length+' errors in this cycle. First error: '+sampleError:'Live RSI(14) qualification requires RSI at or above the threshold on any one completed 3m, 5m or 15m candle. REST history is seeded only once per selected coin/timeframe.';
  $('perfCache').textContent=rsiSocketConnected?'WebSocket connected':'WebSocket connecting';$('perfJobs').textContent=String(rsiCandleHistory.size);$('perfJobResults').textContent=rsiCycleSeeded+' seeded / '+rsiCycleErrors+' errors';
  setStatus(failures.length?'RSI history seed failed: '+sampleError:'RSI WebSocket monitoring active · '+symbols.size+' coins · '+wanted.size+' streams · cached '+rsiCandleHistory.size+' histories.',!!failures.length);
 }
