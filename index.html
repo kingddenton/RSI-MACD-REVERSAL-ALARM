@@ -133,7 +133,14 @@ const outcomeConfig={
 function renderOutcomeBox(key){
  const cfg=outcomeConfig[key],items=[...outcomeState[key].values()];
  $(cfg.count).textContent=String(items.length);
- $(cfg.list).innerHTML=items.length?items.map(item=>'<div class="outcome-item"><span>'+item.symbol+'</span><span class="outcome-time">'+item.time+'</span></div>').join(''):'<div class="outcome-empty">'+cfg.empty+'</div>';
+ $(cfg.list).innerHTML=items.length?items.map(item=>{
+  if(key==='qualified'){
+   const values=item.details&&item.details.timeframes||{};
+   const rsiText=['3m','5m','15m'].map(tf=>tf.toUpperCase()+' '+(Number.isFinite(Number(values[tf]))?Number(values[tf]).toFixed(2):'—')).join('  |  ');
+   return '<div class="outcome-item qualified-item"><span>'+item.symbol+'</span><span class="outcome-rsi">'+rsiText+'</span></div>';
+  }
+  return '<div class="outcome-item"><span>'+item.symbol+'</span><span class="outcome-time">'+item.time+'</span></div>';
+ }).join(''):'<div class="outcome-empty">'+cfg.empty+'</div>';
 }
 function renderOutcomeBoxes(){Object.keys(outcomeConfig).forEach(renderOutcomeBox)}
 function qualifyCoin(symbol,details={}){
