@@ -106,6 +106,9 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
  <div class="wrap" style="margin:10px 0"><table><thead><tr><th>TIME</th><th>MESSAGE</th><th>DETAIL</th></tr></thead><tbody id="btcWsLog"><tr><td colspan="3" class="muted">Run the isolated BTC test to inspect raw Binance events.</td></tr></tbody></table></div>
  <div class="stats"><span>RSI evaluations: <b id="rsiEvalCount">0</b></span><span>Qualified: <b id="rsiQualifiedCount">0</b></span><span>Below threshold: <b id="rsiRejectedCount">0</b></span><span>Waiting for histories: <b id="rsiWaitingCount">0</b></span></div>
  <div class="wrap" style="margin-top:10px"><table><thead><tr><th>Symbol</th><th>Stage</th><th>Timeframe</th><th>Observed value</th><th>Decision / reason</th></tr></thead><tbody id="rsiDecisionRows"><tr><td colspan="5" class="muted">Waiting for the first closed-candle evaluation.</td></tr></tbody></table></div>
+ <h3 style="margin:16px 0 6px;font-size:14px">MACD DIAGNOSTICS · 12, 26, 9</h3>
+ <p class="note">Diagnostic only. DIF, DEA and histogram are calculated from the same closed-candle histories. MACD does not qualify coins or trigger alerts.</p>
+ <div class="wrap"><table><thead><tr><th>Symbol</th><th>Timeframe</th><th>DIF</th><th>DEA</th><th>Histogram</th><th>Position</th></tr></thead><tbody id="macdDiagnosticRows"><tr><td colspan="6" class="muted">Waiting for closed-candle MACD calculations.</td></tr></tbody></table></div>
 </details>
 
 <section class="panel">
@@ -182,6 +185,43 @@ const RSI_INTERVALS=['3m','5m','15m'], RSI_PERIOD=14, rsiLastEvaluated=new Map()
 let rsiScanStats={checked:0,qualified:0,errors:0};
 const rsiDecisionRows=new Map();
 const rsiDecisionStats={evaluations:0,qualified:0,rejected:0,waiting:0};
+const macdDiagnosticRows=new Map();
+function emaSeries(values,period){
+ const out=[];if(values.length<period)return out;
+ const k=2/(period+1);let ema=values.slice(0,period).reduce((a,b)=>a+b,0)/period;
+ out[period-1]=ema;
+ for(let i=period;i<values.length;i++){ema=values[i]*k+ema*(1-k);out[i]=ema}
+ return out;
+}
+function calculateMacdDiagnostic(closes){
+ const fast=emaSeries(closes,12),slow=emaSeries(closes,26),dif=[];
+ for(let i=0;i<closes.length;i++)if(Number.isFinite(fast[i])&&Number.isFinite(slow[i]))dif[i]=fast[i]-slow[i];
+ const valid=dif.filter(Number.isFinite),deaValid=emaSeries(valid,9);
+ if(!valid.length||!Number.isFinite(deaValid[deaValid.length-1]))return null;
+ const d=dif.filter(Number.isFinite).at(-1),e=deaValid.at(-1),h=d-e;
+ return {dif:d,dea:e,hist:h,position:d>=e?'DIF ABOVE DEA':'DIF BELOW DEA'};
+}
+function updateMacdDiagnostic(symbol){
+ const values={};
+ for(const tf of RSI_INTERVALS){
+  const history=rsiCandleHistory.get(rsiHistoryKey(symbol,tf));
+  values[tf]=history?calculateMacdDiagnostic(history.closes):null;
+ }
+ macdDiagnosticRows.delete(symbol);
+ macdDiagnosticRows.set(symbol,values);
+ while(macdDiagnosticRows.size>60)macdDiagnosticRows.delete(macdDiagnosticRows.keys().next().value);
+ renderMacdDiagnostics();
+}
+function renderMacdDiagnostics(){
+ const rows=[];
+ for(const [symbol,values] of macdDiagnosticRows){
+  for(const tf of RSI_INTERVALS){
+   const v=values[tf];
+   rows.push('<tr><td><b>'+symbol+'</b></td><td>'+tf+'</td><td>'+(v?v.dif.toFixed(6):'—')+'</td><td>'+(v?v.dea.toFixed(6):'—')+'</td><td>'+(v?v.hist.toFixed(6):'—')+'</td><td>'+(v?v.position:'Waiting for 26+ closes')+'</td></tr>');
+  }
+ }
+ $('macdDiagnosticRows').innerHTML=rows.length?rows.reverse().join(''):'<tr><td colspan="6" class="muted">Waiting for closed-candle MACD calculations.</td></tr>';
+}
 function calculateRsiSeries(closes,period=RSI_PERIOD){
  const out=[]; if(closes.length<=period)return out;
  let gains=0,losses=0;
@@ -298,6 +338,7 @@ function handleRsiSocketMessage(event){
  rsiWsClosedCandles++;history.closes.push(Number(k.c));if(history.closes.length>120)history.closes.shift();
  history.lastClosedTime=closeTime;rsiScanStats.checked++;
  evaluateClosedRsi(symbol,interval,closeTime);
+ updateMacdDiagnostic(symbol);
  renderRsiDiagnostics();
 }
 function sendRsiSubscription(method,streams){
@@ -332,6 +373,7 @@ async function syncRsiWebSockets(universe){
   rsiCandleHistory.set(rsiHistoryKey(job.coin.symbol,job.interval),{closes,lastClosedTime});
   return {qualified:evaluateClosedRsi(job.coin.symbol,job.interval,lastClosedTime)};
  });
+ for(const coin of universe)updateMacdDiagnostic(coin.symbol);
  const failures=seeded.output.filter(x=>x&&x.error);
  rsiCycleSeeded=seeded.done;rsiCycleErrors=failures.length;
  rsiScanStats.errors+=failures.length;
