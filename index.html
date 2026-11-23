@@ -641,7 +641,7 @@ async function syncEmaUniverse(universe){
    const rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+EMA_INTERVAL+'&limit='+EMA_SEED_LIMIT);
    if(!Array.isArray(rows))throw new Error('Invalid candle history');
    const now=Date.now(),candles=rows.filter(row=>Number(row[6])<now).map(row=>({close:Number(row[4]),closeTime:Number(row[6])}));
-   if(candles.length<EMA_SLOW)throw new Error('Insufficient closed candle history');
+   if(candles.length<EMA_MID)throw new Error('Insufficient closed candle history');
    return {symbol,candles,lastCloseTime:candles[candles.length-1].closeTime};
   });
   let success=0,failed=[],candleCounts=[];
