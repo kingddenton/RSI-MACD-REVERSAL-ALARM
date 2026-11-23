@@ -76,6 +76,13 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
   <div class="perf-metric"><span>Universe load time</span><strong id="dDuration">—</strong></div>
  </div>
  <div class="status" id="diagStatus">Waiting for the first universe load.</div>
+ <h3 style="font-size:13px;margin:14px 0 6px">HISTORICAL CANDLE FETCH DIAGNOSTICS</h3>
+ <p class="note">Reports actual completed candles returned by the existing REST seed requests. No additional API requests are made for these diagnostics.</p>
+ <div class="perf-grid">
+  <div class="perf-metric"><span>RSI · 3m / 5m / 15m</span><strong id="seedRsi">Waiting for seed</strong></div>
+  <div class="perf-metric"><span>MACD · selected timeframe</span><strong id="seedMacd">Waiting for seed</strong></div>
+  <div class="perf-metric"><span>EMA · 1m</span><strong id="seedEma">Waiting for seed</strong></div>
+ </div>
 </details>
 
 
@@ -153,6 +160,11 @@ let market24hChange=new Map();
 let requestConcurrency=8,activeRequests=0,requestWaiters=[],exchangeInfoCache=null,cycle=0;
 const diagnostics={requests:0,peakRequests:0};
 const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
+function updateSeedDiagnostic(id,attempted,successful,failed,candleCounts,admitted,errors){
+ const total=candleCounts.reduce((sum,n)=>sum+n,0),min=candleCounts.length?Math.min(...candleCounts):0,max=candleCounts.length?Math.max(...candleCounts):0;
+ const detail=errors.length?' · Errors: '+errors.slice(0,3).join(' | '):'';
+ $(id).textContent='Requests '+attempted+' · OK '+successful+' · Failed '+failed+' · Candles '+total+' (min/max '+min+'/'+max+') · Coins admitted '+admitted+detail;
+}
 function setStatus(message,error=false){$('status').textContent=message;$('status').className='status'+(error?' negative':'')}
 function setRunning(active){$('start').classList.toggle('running',active);$('start').textContent=active?'Scanning…':'Start scanning'}
 function settings(){return {topCount:$('topCount').value,bottomCount:$('bottomCount').value,volume:$('volume').value,workers:$('workers').value,refresh:$('refresh').value,rsiEntryThreshold:$('rsiEntryThreshold').value,rsiExitThreshold:$('rsiExitThreshold').value,macdCandleWindow:$('macdCandleWindow').value,macdCandleMode:$('macdCandleMode').value,macdInterval:$('macdInterval').value}}
@@ -309,15 +321,17 @@ async function syncRsiUniverse(universe){
    if(candles.length<RSI_PERIOD+1)throw new Error('Insufficient '+task.interval+' candle history');
    return {...task,candles};
   });
-  const failed=new Set();
+  const failed=new Set(),seedErrors=[],candleCounts=[];let successfulRequests=0;
   seeded.output.forEach((result,index)=>{
-   const task=tasks[index];if(!result||result.error){failed.add(task.symbol);return}
+   const task=tasks[index];if(!result||result.error){failed.add(task.symbol);seedErrors.push(task.symbol+' '+task.interval+': '+(result&&result.error||'seed failed'));return}
+   successfulRequests++;candleCounts.push(result.candles.length);
    if(!rsiStates.has(task.symbol))rsiStates.set(task.symbol,{});
    const state=rsiStates.get(task.symbol);state[result.interval]=result.candles;
   });
   for(const symbol of added)if(failed.has(symbol)||!RSI_INTERVALS.every(tf=>rsiStates.get(symbol)&&rsiStates.get(symbol)[tf]))rsiStates.delete(symbol);
   for(const symbol of added)if(rsiStates.has(symbol))evaluateRsiSymbol(symbol,null,false);
-  if(failed.size)rsiSetStatus('RSI history seeded with '+(added.length-failed.size)+'/'+added.length+' coins; '+failed.size+' failed. See browser network console if persistent.');
+  updateSeedDiagnostic('seedRsi',tasks.length,successfulRequests,tasks.length-successfulRequests,candleCounts,added.filter(symbol=>rsiStates.has(symbol)).length,seedErrors);
+  if(failed.size)rsiSetStatus('RSI history seeded with '+(added.length-failed.size)+'/'+added.length+' coins; '+failed.size+' failed.');
  }
  const active=[...rsiWantedSymbols].filter(symbol=>rsiStates.has(symbol));
  rsiWantedSymbols=new Set(active);$('rsiMonitored').textContent=String(active.length);
@@ -502,11 +516,12 @@ async function syncMacdUniverse(universe){
    if(candles.length<MACD_SLOW+MACD_SIGNAL)throw new Error('Insufficient closed candle history');
    return {symbol,candles,lastCloseTime:candles[candles.length-1].closeTime};
   });
-  let success=0,failed=[];
+  let success=0,failed=[],candleCounts=[];
   seeded.output.forEach((result,index)=>{
-   if(result&&!result.error){macdStates.set(result.symbol,result);success++}
+   if(result&&!result.error){macdStates.set(result.symbol,result);success++;candleCounts.push(result.candles.length)}
    else failed.push(added[index]+': '+(result&&result.error||'seed failed'));
   });
+  updateSeedDiagnostic('seedMacd',added.length,success,failed.length,candleCounts,success,failed);
   if(failed.length)macdSetStatus('Seeded '+success+'/'+added.length+' new coins. '+failed.slice(0,3).join(' · '));
  }
  const active=[...macdWantedSymbols].filter(symbol=>macdStates.has(symbol));
@@ -629,11 +644,12 @@ async function syncEmaUniverse(universe){
    if(candles.length<EMA_SLOW)throw new Error('Insufficient closed candle history');
    return {symbol,candles,lastCloseTime:candles[candles.length-1].closeTime};
   });
-  let success=0,failed=[];
+  let success=0,failed=[],candleCounts=[];
   seeded.output.forEach((result,index)=>{
-   if(result&&!result.error){emaStates.set(result.symbol,result);success++}
+   if(result&&!result.error){emaStates.set(result.symbol,result);success++;candleCounts.push(result.candles.length)}
    else failed.push(added[index]+': '+(result&&result.error||'seed failed'));
   });
+  updateSeedDiagnostic('seedEma',added.length,success,failed.length,candleCounts,success,failed);
   if(failed.length)emaSetStatus('Seeded '+success+'/'+added.length+' new coins. '+failed.slice(0,3).join(' · '));
  }
  const active=[...emaWantedSymbols].filter(symbol=>emaStates.has(symbol));
