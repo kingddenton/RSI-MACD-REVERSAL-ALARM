@@ -74,7 +74,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 
 <section class="panel monitor-panel" id="rsiMonitorPanel">
  <div class="top"><h2 style="font-size:16px;margin:0">RSI MOMENTUM MONITOR</h2><div class="macd-state"><span class="macd-dot" id="rsiWsDot"></span><b id="rsiWsState">Not connected</b></div></div>
- <div class="note">RSI(14) · 1m + 3m + 5m · closed candles · a coin qualifies only when all three RSI values are strictly above 70</div>
+ <div class="note">RSI(14) · 1m + 3m + 5m · closed candles · a coin qualifies when ANY one of the 1m, 3m or 5m RSI values is strictly above 70</div>
  <div class="stats" style="margin-top:10px">
   <span>Monitored coins: <b id="rsiMonitored">0</b></span>
   <span>Qualified coins: <b id="rsiQualified">0</b></span>
@@ -199,7 +199,7 @@ function renderRsiQualified(){
 function evaluateRsiSymbol(symbol){
  const values=rsiValuesFor(symbol);
  if(!values||RSI_INTERVALS.some(tf=>values[tf]===null)){rsiQualifiedMap.delete(symbol);renderRsiQualified();return}
- if(RSI_INTERVALS.every(tf=>values[tf]>70))rsiQualifiedMap.set(symbol,{symbol,...values});
+ if(RSI_INTERVALS.some(tf=>values[tf]>70))rsiQualifiedMap.set(symbol,{symbol,...values});
  else rsiQualifiedMap.delete(symbol);
  renderRsiQualified();
 }
