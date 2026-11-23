@@ -148,6 +148,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 const API='https://fapi.binance.com',STORE='reversal-alarm-shell-v1', $=id=>document.getElementById(id);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let running=false,stopRequested=false,scanBusy=false,loopTimer=null,rateLimitUntil=0;
+let market24hChange=new Map();
 let requestConcurrency=8,activeRequests=0,requestWaiters=[],exchangeInfoCache=null,cycle=0;
 const diagnostics={requests:0,peakRequests:0};
 const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
@@ -368,11 +369,11 @@ function pruneMacdEvents(){
 }
 function renderMacdEvents(){
  const max=macdWindowSize();
- const render=(events,kind)=>events.length?events.map(event=>
-  '<div class="macd-event"><div><strong>'+event.symbol+'</strong><div class="'+(kind==='bull'?'positive':'negative')+'">'+(kind==='bull'?'BULLISH CROSS':'BEARISH CROSS')+'</div></div><div class="macd-meta">'+(event.live?'<b class="positive">LIVE · NOT CONFIRMED</b><br>':'')+'Candle '+event.candleNo+'/'+max+'<br>'+event.time+'<br>Close: '+event.close+'</div></div>'
- ).join(''):'<span class="note">No new '+(kind==='bull'?'bullish':'bearish')+' crossovers in the current candle window.</span>';
- $('macdBullEvents').innerHTML=render(macdBullEvents,'bull');
- $('macdBearEvents').innerHTML=render(macdBearEvents,'bear');
+ const render=events=>events.length?events.map(event=>
+  '<div class="macd-event"><strong>'+event.symbol+'</strong><span class="macd-meta">Candle '+event.candleNo+'/'+max+'</span><b class="'+(Number.isFinite(event.rsi1m)&&event.rsi1m<80?'positive':'negative')+'">RSI '+(Number.isFinite(event.rsi1m)?event.rsi1m.toFixed(2):'—')+'</b></div>'
+ ).join(''):'<span class="note">No new crossovers in the current candle window.</span>';
+ $('macdBullEvents').innerHTML=render(macdBullEvents);
+ $('macdBearEvents').innerHTML=render(macdBearEvents);
  $('macdBullCount').textContent=String(macdBullEvents.length);
  $('macdBearCount').textContent=String(macdBearEvents.length);
  $('macdCandles').textContent=String(macdClosedCandles);
@@ -382,7 +383,10 @@ function removeLiveMacdEvent(symbol){
  macdBearEvents=macdBearEvents.filter(event=>!(event.symbol===symbol&&event.live));
 }
 function recordMacdCross(symbol,kind,kline,isLive=false){
- const event={symbol,time:new Date(Number(kline.T)).toLocaleTimeString(),close:Number(kline.c).toPrecision(8),candleNo:1,live:isLive};
+ const state=macdStates.get(symbol);
+ const rsiCandles=state?(isLive?[...state.candles,{close:Number(kline.c),closeTime:Number(kline.T)}]:state.candles):[];
+ const rsi1m=rsiCandles.length?calculateRsi(rsiCandles.map(c=>c.close),RSI_PERIOD):null;
+ const event={symbol,rsi1m,candleNo:1,live:isLive};
  if(kind==='bull'){macdBullEvents.unshift(event);macdBullEvents=macdBullEvents.slice(0,10)}
  else{macdBearEvents.unshift(event);macdBearEvents=macdBearEvents.slice(0,10)}
  renderMacdEvents();
@@ -545,11 +549,12 @@ function updateEmaAlignment(symbol){
  renderEmaRows();
 }
 function renderEmaRows(){
- const render=(items,kind)=>items.size?[...items.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([symbol,v])=>
-  '<div class="ema-item"><div><strong>'+symbol+'</strong><div class="'+(kind==='bull'?'positive':'negative')+'">'+(kind==='bull'?'BULLISH ALIGNMENT':'BEARISH ALIGNMENT')+'</div></div><div class="ema-meta">EMA 7: '+v.fast.toPrecision(7)+'<br>EMA 25: '+v.mid.toPrecision(7)+'<br>EMA 99: '+v.slow.toPrecision(7)+'</div></div>'
- ).join(''):'<span class="note">No '+(kind==='bull'?'bullish':'bearish')+' alignment currently.</span>';
- $('emaBullRows').innerHTML=render(emaBullSymbols,'bull');
- $('emaBearRows').innerHTML=render(emaBearSymbols,'bear');
+ const render=items=>items.size?[...items.keys()].sort((a,b)=>a.localeCompare(b)).map(symbol=>{
+  const change=market24hChange.get(symbol),valid=Number.isFinite(change);
+  return '<div class="ema-item"><strong>'+symbol+'</strong><b class="'+(valid?(change>=0?'positive':'negative'):'muted')+'">'+(valid?(change>=0?'+':'')+change.toFixed(2)+'%':'—')+'</b></div>';
+ }).join(''):'<span class="note">No alignment currently.</span>';
+ $('emaBullRows').innerHTML=render(emaBullSymbols);
+ $('emaBearRows').innerHTML=render(emaBearSymbols);
  $('emaBullCount').textContent=String(emaBullSymbols.size);
  $('emaBearCount').textContent=String(emaBearSymbols.size);
  $('emaCandles').textContent=String(emaClosedCandles);
@@ -651,6 +656,7 @@ async function loadUniverse(){
   ]);
   if(!exchangeInfoCache)exchangeInfoCache=info;
   if(stopRequested)return;
+  market24hChange=new Map(tickers.map(t=>[t.symbol,Number(t.priceChangePercent)]));
   const tickerMap=new Map(tickers.map(t=>[t.symbol,t]));
   const perpetuals=info.symbols.filter(s=>s.status==='TRADING'&&s.contractType==='PERPETUAL'&&s.quoteAsset==='USDT'&&s.marginAsset==='USDT');
   const minVolume=Math.max(0,Number($('volume').value)||0);
@@ -667,6 +673,7 @@ async function loadUniverse(){
   $('universeRule').textContent='Top '+top.length+' / Bottom '+bottom.length+' · 24H price change';
   $('volumeRule').textContent=fmt(minVolume)+' USDT';renderUniverse(universe);
   await syncRsiUniverse(universe);
+  renderEmaRows();
   const duration=(Date.now()-started)/1000;
   $('last').textContent=new Date().toLocaleTimeString();
   $('dContracts').textContent=fmt(info.symbols.length);$('dPerpetuals').textContent=fmt(perpetuals.length);
