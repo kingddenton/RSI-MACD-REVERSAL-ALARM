@@ -74,7 +74,11 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 
 <section class="panel monitor-panel" id="rsiMonitorPanel">
  <div class="top"><h2 style="font-size:16px;margin:0">RSI MOMENTUM MONITOR</h2><div class="macd-state"><span class="macd-dot" id="rsiWsDot"></span><b id="rsiWsState">Not connected</b></div></div>
- <div class="note">RSI(14) · 3m + 5m + 15m · closed candles · a coin qualifies when ANY one of the 3m, 5m or 15m RSI values is strictly above 70</div>
+ <div class="note">RSI(14) · 3m + 5m + 15m · closed candles · candidates enter when ANY timeframe exceeds the entry threshold and remain until a completed 15m RSI falls below the removal threshold.</div>
+ <div class="controls" style="margin-top:10px">
+  <div class="field"><label for="rsiEntryThreshold">RSI ENTRY THRESHOLD · ANY TF ABOVE</label><input id="rsiEntryThreshold" type="number" min="0" max="100" step="1" value="70"></div>
+  <div class="field"><label for="rsiExitThreshold">15M RSI REMOVAL THRESHOLD · BELOW</label><input id="rsiExitThreshold" type="number" min="0" max="100" step="1" value="30"></div>
+ </div>
  <div class="stats" style="margin-top:10px">
   <span>Monitored coins: <b id="rsiMonitored">0</b></span>
   <span>Qualified coins: <b id="rsiQualified">0</b></span>
@@ -127,7 +131,7 @@ const diagnostics={requests:0,peakRequests:0};
 const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
 function setStatus(message,error=false){$('status').textContent=message;$('status').className='status'+(error?' negative':'')}
 function setRunning(active){$('start').classList.toggle('running',active);$('start').textContent=active?'Scanning…':'Start scanning'}
-function settings(){return {topCount:$('topCount').value,bottomCount:$('bottomCount').value,volume:$('volume').value,workers:$('workers').value,refresh:$('refresh').value,macdCandleWindow:$('macdCandleWindow').value,macdCandleMode:$('macdCandleMode').value}}
+function settings(){return {topCount:$('topCount').value,bottomCount:$('bottomCount').value,volume:$('volume').value,workers:$('workers').value,refresh:$('refresh').value,rsiEntryThreshold:$('rsiEntryThreshold').value,rsiExitThreshold:$('rsiExitThreshold').value,macdCandleWindow:$('macdCandleWindow').value,macdCandleMode:$('macdCandleMode').value}}
 function saveSettings(){try{localStorage.setItem(STORE,JSON.stringify(settings()));setStatus('Settings saved in this browser.')}catch(e){setStatus('Could not save settings in this browser.',true)}}
 function loadSettings(){try{const s=JSON.parse(localStorage.getItem(STORE)||'{}');for(const [k,v] of Object.entries(s))if($(k))$(k).value=v}catch(e){}}
 async function acquireRequestSlot(){
@@ -162,6 +166,13 @@ const RSI_WS_BASE='wss://fstream.binance.com/market/stream?streams=';
 let rsiMonitoringEnabled=false,rsiSocket=null,rsiReconnectTimer=null,rsiRenewTimer=null;
 let rsiReconnectDelay=1500,rsiWantedSymbols=new Set(),rsiStates=new Map();
 let rsiQualifiedMap=new Map(),rsiClosedCandles=0;
+let macdSyncChain=Promise.resolve();
+const rsiThreshold=(id,fallback)=>{const n=Number($(id).value);return Number.isFinite(n)?Math.max(0,Math.min(100,n)):fallback};
+function queueMacdCandidateSync(){
+ if(!macdMonitoringEnabled)return;
+ const snapshot=[...rsiQualifiedMap.keys()].map(symbol=>({symbol}));
+ macdSyncChain=macdSyncChain.then(()=>syncMacdUniverse(snapshot)).catch(error=>macdSetStatus('Candidate handoff error: '+(error.message||error)));
+}
 function rsiSetStatus(message,connected=false){
  $('rsiStatus').textContent=message;
  $('rsiWsState').textContent=connected?'Connected':'Disconnected';
@@ -196,12 +207,20 @@ function renderRsiQualified(){
  $('rsiQualifiedRows').innerHTML=rows.length?rows.map(row=>'<tr><td><b>'+row.symbol+'</b></td><td class="num">'+row['3m'].toFixed(2)+'</td><td class="num">'+row['5m'].toFixed(2)+'</td><td class="num">'+row['15m'].toFixed(2)+'</td><td class="positive">QUALIFIED</td></tr>').join(''):'<tr><td colspan="5" class="muted">No coins currently have RSI above 70 on any of the three timeframes.</td></tr>';
  $('rsiCandles').textContent=String(rsiClosedCandles);
 }
-function evaluateRsiSymbol(symbol){
+function evaluateRsiSymbol(symbol,updatedInterval=null,notify=true){
  const values=rsiValuesFor(symbol);
- if(!values||RSI_INTERVALS.some(tf=>values[tf]===null)){rsiQualifiedMap.delete(symbol);renderRsiQualified();return}
- if(RSI_INTERVALS.some(tf=>values[tf]>70))rsiQualifiedMap.set(symbol,{symbol,...values});
- else rsiQualifiedMap.delete(symbol);
+ if(!values||RSI_INTERVALS.some(tf=>values[tf]===null))return;
+ const wasCandidate=rsiQualifiedMap.has(symbol);
+ let isCandidate=wasCandidate;
+ if(wasCandidate){
+  if(updatedInterval==='15m'&&values['15m']<rsiThreshold('rsiExitThreshold',30)){
+   rsiQualifiedMap.delete(symbol);isCandidate=false;
+  }else rsiQualifiedMap.set(symbol,{symbol,...values});
+ }else if(RSI_INTERVALS.some(tf=>values[tf]>rsiThreshold('rsiEntryThreshold',70))){
+  rsiQualifiedMap.set(symbol,{symbol,...values});isCandidate=true;
+ }
  renderRsiQualified();
+ if(notify&&wasCandidate!==isCandidate)queueMacdCandidateSync();
 }
 function processRsiKline(message){
  const k=message&&message.k;
@@ -211,7 +230,7 @@ function processRsiKline(message){
  if(!Number.isFinite(closeTime)||!Number.isFinite(close))return;
  const candles=state[k.i];if(candles.length&&closeTime<=candles[candles.length-1].closeTime)return;
  candles.push({close,closeTime});if(candles.length>RSI_SEED_LIMIT+20)candles.splice(0,candles.length-(RSI_SEED_LIMIT+20));
- rsiClosedCandles++;evaluateRsiSymbol(k.s);
+ rsiClosedCandles++;evaluateRsiSymbol(k.s,k.i);
 }
 function closeRsiSocket(){
  clearTimeout(rsiRenewTimer);const socket=rsiSocket;rsiSocket=null;
@@ -273,13 +292,14 @@ async function syncRsiUniverse(universe){
    const state=rsiStates.get(task.symbol);state[result.interval]=result.candles;
   });
   for(const symbol of added)if(failed.has(symbol)||!RSI_INTERVALS.every(tf=>rsiStates.get(symbol)&&rsiStates.get(symbol)[tf]))rsiStates.delete(symbol);
-  for(const symbol of added)if(rsiStates.has(symbol))evaluateRsiSymbol(symbol);
+  for(const symbol of added)if(rsiStates.has(symbol))evaluateRsiSymbol(symbol,null,false);
   if(failed.size)rsiSetStatus('RSI history seeded with '+(added.length-failed.size)+'/'+added.length+' coins; '+failed.size+' failed. See browser network console if persistent.');
  }
  const active=[...rsiWantedSymbols].filter(symbol=>rsiStates.has(symbol));
  rsiWantedSymbols=new Set(active);$('rsiMonitored').textContent=String(active.length);
  if(!active.length){closeRsiSocket();rsiSetStatus('No coins could be initialized. Check Binance REST access.');return}
  connectRsiSocket();
+ queueMacdCandidateSync();
 }
 function stopRsiMonitor(){
  rsiMonitoringEnabled=false;clearTimeout(rsiReconnectTimer);clearTimeout(rsiRenewTimer);closeRsiSocket();
@@ -292,7 +312,7 @@ function stopRsiMonitor(){
 const MACD_INTERVAL='1m',MACD_FAST=12,MACD_SLOW=26,MACD_SIGNAL=9,MACD_SEED_LIMIT=150;
 const MACD_WS_BASE='wss://fstream.binance.com/market/stream?streams=';
 let macdMonitoringEnabled=false,macdSocket=null,macdReconnectTimer=null,macdRenewTimer=null;
-let macdReconnectDelay=1500,macdWantedSymbols=new Set(),macdStates=new Map();
+let macdReconnectDelay=1500,macdWantedSymbols=new Set(),macdCandidateSymbols=new Set(),macdStates=new Map();
 let macdBullEvents=[],macdBearEvents=[],macdClosedCandles=0,macdWsMessages=0;
 
 function macdSetStatus(message,connected=false){
@@ -350,6 +370,10 @@ function ageMacdEvents(symbol){
  for(const event of [...macdBullEvents,...macdBearEvents])if(event.symbol===symbol&&!event.live)event.candleNo++;
  pruneMacdEvents();
 }
+function hasPendingMacdEvent(symbol){
+ const max=macdWindowSize();
+ return [...macdBullEvents,...macdBearEvents].some(event=>event.symbol===symbol&&!event.live&&event.candleNo<=max);
+}
 function detectMacdCross(rows){
  if(rows.length<2)return null;
  const previous=rows[rows.length-2],current=rows[rows.length-1];
@@ -380,9 +404,13 @@ function processMacdKline(message){
  state.candles.push({close,closeTime});
  if(state.candles.length>220)state.candles.splice(0,state.candles.length-220);
  state.lastCloseTime=closeTime;
- const direction=detectMacdCross(calculateMacdSeries(state.candles));
+ const direction=macdCandidateSymbols.has(symbol)?detectMacdCross(calculateMacdSeries(state.candles)):null;
  if(direction)recordMacdCross(symbol,direction,k,false);
  macdClosedCandles++;renderMacdEvents();
+ if(!macdCandidateSymbols.has(symbol)&&!hasPendingMacdEvent(symbol)){
+  macdStates.delete(symbol);
+  syncMacdUniverse([...macdCandidateSymbols].map(item=>({symbol:item}))).catch(error=>macdSetStatus('MACD subscription update failed: '+(error.message||error)));
+ }
 }
 function handleMacdSocketMessage(event){
  let payload;try{payload=JSON.parse(event.data)}catch(error){return}
@@ -423,18 +451,21 @@ function connectMacdSocket(){
 }
 async function syncMacdUniverse(universe){
  if(!macdMonitoringEnabled)return;
- const nextSymbols=new Set(universe.map(item=>item.symbol));
- const added=[...nextSymbols].filter(symbol=>!macdStates.has(symbol));
- const removed=[...macdWantedSymbols].filter(symbol=>!nextSymbols.has(symbol));
+ const nextCandidates=new Set(universe.map(item=>item.symbol));
+ macdCandidateSymbols=nextCandidates;
+ const eventOnly=[...new Set([...macdBullEvents,...macdBearEvents].filter(event=>!event.live&&event.candleNo<=macdWindowSize()).map(event=>event.symbol))];
+ const nextStreams=new Set([...nextCandidates,...eventOnly]);
+ const added=[...nextStreams].filter(symbol=>!macdStates.has(symbol));
+ const removed=[...macdWantedSymbols].filter(symbol=>!nextStreams.has(symbol));
  if(!added.length&&!removed.length&&macdSocket&&[WebSocket.CONNECTING,WebSocket.OPEN].includes(macdSocket.readyState)){
-  $('macdMonitored').textContent=String(nextSymbols.size);return;
+  $('macdMonitored').textContent=String(nextCandidates.size);return;
  }
  for(const symbol of removed)macdStates.delete(symbol);
- macdWantedSymbols=nextSymbols;
- $('macdMonitored').textContent=String(nextSymbols.size);
- if(!nextSymbols.size){closeMacdSocket();macdSetStatus('No coins are currently selected in the market universe.');return}
+ macdWantedSymbols=nextStreams;
+ $('macdMonitored').textContent=String(nextCandidates.size);
+ if(!nextStreams.size){closeMacdSocket();macdSetStatus('Waiting for RSI-qualified candidates.');return}
  if(added.length){
-  macdSetStatus('Seeding '+added.length+' newly selected coins with closed 1m candles…');
+  macdSetStatus('Seeding '+added.length+' RSI candidate / event-retention coins with closed 1m candles…');
   const seeded=await mapLimit(added,requestConcurrency,async symbol=>{
    const rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+MACD_INTERVAL+'&limit='+MACD_SEED_LIMIT);
    if(!Array.isArray(rows))throw new Error('Invalid candle history');
@@ -452,13 +483,13 @@ async function syncMacdUniverse(universe){
  }
  const active=[...macdWantedSymbols].filter(symbol=>macdStates.has(symbol));
  macdWantedSymbols=new Set(active);
- $('macdMonitored').textContent=String(active.length);
- if(!active.length){closeMacdSocket();macdSetStatus('No coins could be initialized. Check Binance REST access.');return}
+ $('macdMonitored').textContent=String(macdCandidateSymbols.size);
+ if(!active.length){closeMacdSocket();macdSetStatus('Waiting for RSI-qualified candidates.');return}
  connectMacdSocket();
 }
 function stopMacdMonitor(){
  macdMonitoringEnabled=false;clearTimeout(macdReconnectTimer);clearTimeout(macdRenewTimer);
- closeMacdSocket();macdWantedSymbols.clear();macdStates.clear();
+ closeMacdSocket();macdWantedSymbols.clear();macdCandidateSymbols.clear();macdStates.clear();
  $('macdMonitored').textContent='0';macdSetStatus('MACD monitor stopped.');
 }
 
@@ -494,7 +525,6 @@ async function loadUniverse(){
   $('universeRule').textContent='Top '+top.length+' / Bottom '+bottom.length+' · 24H price change';
   $('volumeRule').textContent=fmt(minVolume)+' USDT';renderUniverse(universe);
   await syncRsiUniverse(universe);
-  await syncMacdUniverse(universe);
   const duration=(Date.now()-started)/1000;
   $('last').textContent=new Date().toLocaleTimeString();
   $('dContracts').textContent=fmt(info.symbols.length);$('dPerpetuals').textContent=fmt(perpetuals.length);
@@ -517,7 +547,12 @@ $('start').addEventListener('click',()=>{if(running)return;macdMonitoringEnabled
 $('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}macdMonitoringEnabled=true;rsiMonitoringEnabled=true;stopRequested=false;loadUniverse()});
 $('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);stopMacdMonitor();stopRsiMonitor();setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
 $('save').addEventListener('click',saveSettings);
-$('macdCandleWindow').addEventListener('change',()=>{pruneMacdEvents();renderMacdEvents()});
+$('macdCandleWindow').addEventListener('change',()=>{
+ pruneMacdEvents();renderMacdEvents();
+ if(macdMonitoringEnabled)syncMacdUniverse([...macdCandidateSymbols].map(symbol=>({symbol}))).catch(error=>macdSetStatus('MACD subscription update failed: '+(error.message||error)));
+});
+$('rsiEntryThreshold').addEventListener('change',()=>rsiSetStatus('Entry threshold updated. It will apply to subsequent completed RSI candles.',!!(rsiSocket&&rsiSocket.readyState===WebSocket.OPEN)));
+$('rsiExitThreshold').addEventListener('change',()=>rsiSetStatus('15m removal threshold updated. It will apply on the next completed 15m candle.',!!(rsiSocket&&rsiSocket.readyState===WebSocket.OPEN)));
 $('macdCandleMode').addEventListener('change',()=>{
  for(const symbol of macdWantedSymbols)removeLiveMacdEvent(symbol);
  renderMacdEvents();
