@@ -274,7 +274,7 @@ async function syncRsiUniverse(universe){
  }
  for(const symbol of removed){rsiStates.delete(symbol);rsiQualifiedMap.delete(symbol)}
  rsiWantedSymbols=next;$('rsiMonitored').textContent=String(next.size);renderRsiQualified();
- if(!next.size){closeRsiSocket();rsiSetStatus('No coins are currently selected in the market universe.');return}
+ if(!next.size){closeRsiSocket();rsiSetStatus('No coins are currently selected in the market universe.');queueMacdCandidateSync();return}
  if(added.length){
   rsiSetStatus('Seeding RSI(14) history for '+added.length+' newly selected coins across 3m, 5m and 15m…');
   const tasks=added.flatMap(symbol=>RSI_INTERVALS.map(interval=>({symbol,interval})));
