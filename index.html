@@ -21,7 +21,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 #universeDetails>summary{list-style:none}#universeDetails>summary::-webkit-details-marker{display:none}#universeDetails>summary:after{content:'＋';color:var(--blue);font-size:16px}#universeDetails[open]>summary:after{content:'−'}
 @media(max-width:650px){.perf-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){main{padding:11px}h1{font-size:19px}.panel{padding:11px}}
 
-.macd-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+.macd-columns{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}
 .macd-box{background:#0c1625;border:1px solid var(--line);border-radius:9px;padding:10px;min-width:0}
 .macd-box h3{font-size:13px;margin:0 0 8px}
 .macd-bull h3{color:var(--green)}.macd-bear h3{color:var(--red)}
@@ -34,7 +34,6 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 .macd-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
 .macd-dot.live{background:var(--green);box-shadow:0 0 8px #36d39988}
 .macd-dot.wait{background:var(--amber)}
-.ema-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
 .ema-box{background:#0c1625;border:1px solid var(--line);border-radius:9px;padding:10px;min-width:0}
 .ema-box h3{font-size:13px;margin:0 0 8px}
 .ema-bull h3{color:var(--green)}.ema-bear h3{color:var(--red)}
@@ -42,7 +41,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 .ema-item{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px}
 .ema-item:last-child{border-bottom:0}
 .ema-meta{color:var(--muted);font-size:11px;text-align:right}
-@media(max-width:650px){.macd-columns,.ema-columns{grid-template-columns:1fr}}
+@media(max-width:900px){.macd-columns{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 </style>
 </head>
@@ -114,33 +113,27 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
   <span>New bearish crosses: <b id="macdBearCount">0</b></span>
  </div>
  <div class="status" id="macdStatus">Start the scanner to seed candle history and connect the Binance market WebSocket.</div>
- <div class="macd-columns">
-  <div class="macd-box macd-bull"><h3>NEW BULLISH CROSSOVERS · LAST 10</h3><div class="macd-events" id="macdBullEvents"><span class="note">No new bullish crossovers yet.</span></div></div>
-  <div class="macd-box macd-bear"><h3>NEW BEARISH CROSSOVERS · LAST 10</h3><div class="macd-events" id="macdBearEvents"><span class="note">No new bearish crossovers yet.</span></div></div>
- </div>
- <p class="note" id="macdRuleNote" style="margin:10px 0 0">Closed mode: a crossover is recorded only after the 1-minute candle closes. Live mode: a provisional crossover can appear or disappear while the candle forms. Historical seed data initializes MACD but never creates an alert.</p>
-</section>
-
-<section class="panel monitor-panel" id="emaMonitorPanel">
- <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-  <div><h2 style="font-size:16px;margin:0">EMA ALIGNMENT MONITOR</h2>
-   <div class="note">EMA 7 / 25 / 99 · 1-minute candles · closed-candle alignment · RSI-qualified coins only</div>
-  </div>
+ <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px">
+  <div><b style="font-size:13px">EMA ALIGNMENT MONITOR · 7 / 25 / 99 · 1M CLOSED CANDLES</b><div class="note">RSI-qualified coins only</div></div>
   <div class="macd-state"><span class="macd-dot" id="emaWsDot"></span><b id="emaWsState">Not connected</b></div>
  </div>
- <div class="stats" style="margin-top:12px">
-  <span>Monitored coins: <b id="emaMonitored">0</b></span>
+ <div class="stats" style="margin-top:8px">
+  <span>EMA monitored: <b id="emaMonitored">0</b></span>
   <span>Closed candles processed: <b id="emaCandles">0</b></span>
   <span>Bullish aligned: <b id="emaBullCount">0</b></span>
   <span>Bearish aligned: <b id="emaBearCount">0</b></span>
  </div>
  <div class="status" id="emaStatus">Waiting for RSI-qualified candidates.</div>
- <div class="ema-columns">
-  <div class="ema-box ema-bull"><h3>BULLISH · EMA 7 &gt; 25 &gt; 99</h3><div class="ema-list" id="emaBullRows"><span class="note">No bullish alignment yet.</span></div></div>
-  <div class="ema-box ema-bear"><h3>BEARISH · EMA 7 &lt; 25 &lt; 99</h3><div class="ema-list" id="emaBearRows"><span class="note">No bearish alignment yet.</span></div></div>
+ <div class="macd-columns">
+  <div class="macd-box macd-bull"><h3>NEW BULLISH CROSSOVERS · LAST 10</h3><div class="macd-events" id="macdBullEvents"><span class="note">No new bullish crossovers yet.</span></div></div>
+  <div class="macd-box macd-bear"><h3>NEW BEARISH CROSSOVERS · LAST 10</h3><div class="macd-events" id="macdBearEvents"><span class="note">No new bearish crossovers yet.</span>
+ <div class="ema-box ema-bull"><h3>BULLISH · EMA 7 &gt; 25 &gt; 99</h3><div class="ema-list" id="emaBullRows"><span class="note">No bullish alignment yet.</span></div>
+  </div></div>
  </div>
- <p class="note" style="margin:10px 0 0">A coin remains in its column while the completed 1-minute candles maintain the full EMA alignment. It leaves when the alignment breaks or the coin is removed from the RSI candidate list.</p>
+ <p class="note" id="macdRuleNote" style="margin:10px 0 0">Closed mode: a crossover is recorded only after the 1-minute candle closes. Live mode: a provisional crossover can appear or disappear while the candle forms. Historical seed data initializes MACD but never creates an alert.</p>
 </section>
+
+
 
 <section class="panel">
  <details id="universeDetails" open>
