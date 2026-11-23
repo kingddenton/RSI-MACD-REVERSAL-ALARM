@@ -79,6 +79,10 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
   </div>
   <div class="macd-state"><span class="macd-dot" id="macdWsDot"></span><b id="macdWsState">Not connected</b></div>
  </div>
+ <div class="controls" style="margin-top:12px">
+  <div class="field"><label for="macdCandleWindow">CROSSOVER DISPLAY WINDOW · CANDLES</label><input id="macdCandleWindow" type="number" min="1" max="100" step="1" value="5"></div>
+  <div class="field"><label for="macdCandleMode">CANDLE DETECTION MODE</label><select id="macdCandleMode"><option value="closed" selected>Closed candle · Default</option><option value="live">Live candle · Intrabar</option></select></div>
+ </div>
  <div class="stats" style="margin-top:12px">
   <span>Monitored coins: <b id="macdMonitored">0</b></span>
   <span>Closed candles processed: <b id="macdCandles">0</b></span>
@@ -111,7 +115,7 @@ const diagnostics={requests:0,peakRequests:0};
 const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
 function setStatus(message,error=false){$('status').textContent=message;$('status').className='status'+(error?' negative':'')}
 function setRunning(active){$('start').classList.toggle('running',active);$('start').textContent=active?'Scanning…':'Start scanning'}
-function settings(){return {topCount:$('topCount').value,bottomCount:$('bottomCount').value,volume:$('volume').value,workers:$('workers').value,refresh:$('refresh').value}}
+function settings(){return {topCount:$('topCount').value,bottomCount:$('bottomCount').value,volume:$('volume').value,workers:$('workers').value,refresh:$('refresh').value,macdCandleWindow:$('macdCandleWindow').value,macdCandleMode:$('macdCandleMode').value}}
 function saveSettings(){try{localStorage.setItem(STORE,JSON.stringify(settings()));setStatus('Settings saved in this browser.')}catch(e){setStatus('Could not save settings in this browser.',true)}}
 function loadSettings(){try{const s=JSON.parse(localStorage.getItem(STORE)||'{}');for(const [k,v] of Object.entries(s))if($(k))$(k).value=v}catch(e){}}
 async function acquireRequestSlot(){
@@ -170,39 +174,70 @@ function calculateMacdSeries(candles){
  for(let i=0;i<macdValues.length;i++)if(signal[i]!==null)out.push({closeTime:macdTimes[i],macd:macdValues[i],signal:signal[i],hist:macdValues[i]-signal[i]});
  return out;
 }
+function macdWindowSize(){return Math.max(1,Math.min(100,Math.floor(Number($('macdCandleWindow').value)||5)))}
+function pruneMacdEvents(){
+ const max=macdWindowSize();
+ macdBullEvents=macdBullEvents.filter(event=>event.live||event.candleNo<=max).slice(0,10);
+ macdBearEvents=macdBearEvents.filter(event=>event.live||event.candleNo<=max).slice(0,10);
+}
 function renderMacdEvents(){
+ const max=macdWindowSize();
  const render=(events,kind)=>events.length?events.map(event=>
-  '<div class="macd-event"><div><strong>'+event.symbol+'</strong><div class="'+(kind==='bull'?'positive':'negative')+'">'+(kind==='bull'?'BULLISH CROSS':'BEARISH CROSS')+'</div></div><div class="macd-meta">'+event.time+'<br>Close: '+event.close+'</div></div>'
- ).join(''):'<span class="note">No new '+(kind==='bull'?'bullish':'bearish')+' crossovers yet.</span>';
+  '<div class="macd-event"><div><strong>'+event.symbol+'</strong><div class="'+(kind==='bull'?'positive':'negative')+'">'+(kind==='bull'?'BULLISH CROSS':'BEARISH CROSS')+'</div></div><div class="macd-meta">'+(event.live?'<b class="positive">LIVE · NOT CONFIRMED</b><br>':'')+'Candle '+event.candleNo+'/'+max+'<br>'+event.time+'<br>Close: '+event.close+'</div></div>'
+ ).join(''):'<span class="note">No new '+(kind==='bull'?'bullish':'bearish')+' crossovers in the current candle window.</span>';
  $('macdBullEvents').innerHTML=render(macdBullEvents,'bull');
  $('macdBearEvents').innerHTML=render(macdBearEvents,'bear');
  $('macdBullCount').textContent=String(macdBullEvents.length);
  $('macdBearCount').textContent=String(macdBearEvents.length);
  $('macdCandles').textContent=String(macdClosedCandles);
 }
-function recordMacdCross(symbol,kind,kline){
- const event={symbol,time:new Date(Number(kline.T)).toLocaleTimeString(),close:Number(kline.c).toPrecision(8)};
+function removeLiveMacdEvent(symbol){
+ macdBullEvents=macdBullEvents.filter(event=>!(event.symbol===symbol&&event.live));
+ macdBearEvents=macdBearEvents.filter(event=>!(event.symbol===symbol&&event.live));
+}
+function recordMacdCross(symbol,kind,kline,isLive=false){
+ const event={symbol,time:new Date(Number(kline.T)).toLocaleTimeString(),close:Number(kline.c).toPrecision(8),candleNo:1,live:isLive};
  if(kind==='bull'){macdBullEvents.unshift(event);macdBullEvents=macdBullEvents.slice(0,10)}
  else{macdBearEvents.unshift(event);macdBearEvents=macdBearEvents.slice(0,10)}
  renderMacdEvents();
- macdSetStatus((kind==='bull'?'New bullish':'New bearish')+' MACD crossover: '+symbol+' · confirmed on the closed 1m candle.',true);
+ macdSetStatus((isLive?'Live potential ':'New ')+(kind==='bull'?'bullish':'bearish')+' MACD crossover: '+symbol+(isLive?' · may disappear before candle close.':' · confirmed on the closed 1m candle.'),true);
+}
+function ageMacdEvents(symbol){
+ for(const event of [...macdBullEvents,...macdBearEvents])if(event.symbol===symbol&&!event.live)event.candleNo++;
+ pruneMacdEvents();
+}
+function detectMacdCross(rows){
+ if(rows.length<2)return null;
+ const previous=rows[rows.length-2],current=rows[rows.length-1];
+ if(previous.hist<=0&&current.hist>0)return 'bull';
+ if(previous.hist>=0&&current.hist<0)return 'bear';
+ return null;
 }
 function processMacdKline(message){
  const k=message&&message.k;
- if(!k||!k.x||k.i!==MACD_INTERVAL)return;
+ if(!k||k.i!==MACD_INTERVAL)return;
  const symbol=k.s,state=macdStates.get(symbol);
  if(!state)return;
- const closeTime=Number(k.T);
- if(!Number.isFinite(closeTime)||closeTime<=state.lastCloseTime)return;
- state.candles.push({close:Number(k.c),closeTime});
+ const closeTime=Number(k.T),close=Number(k.c);
+ if(!Number.isFinite(closeTime)||!Number.isFinite(close))return;
+ const mode=$('macdCandleMode').value;
+ if(!k.x){
+  if(mode!=='live'||closeTime<=state.lastCloseTime)return;
+  const provisional=[...state.candles,{close,closeTime}];
+  const direction=detectMacdCross(calculateMacdSeries(provisional));
+  removeLiveMacdEvent(symbol);
+  if(direction)recordMacdCross(symbol,direction,k,true);
+  else renderMacdEvents();
+  return;
+ }
+ if(closeTime<=state.lastCloseTime)return;
+ removeLiveMacdEvent(symbol);
+ ageMacdEvents(symbol);
+ state.candles.push({close,closeTime});
  if(state.candles.length>220)state.candles.splice(0,state.candles.length-220);
  state.lastCloseTime=closeTime;
- const rows=calculateMacdSeries(state.candles);
- if(rows.length>=2){
-  const previous=rows[rows.length-2],current=rows[rows.length-1];
-  if(previous.hist<=0&&current.hist>0)recordMacdCross(symbol,'bull',k);
-  else if(previous.hist>=0&&current.hist<0)recordMacdCross(symbol,'bear',k);
- }
+ const direction=detectMacdCross(calculateMacdSeries(state.candles));
+ if(direction)recordMacdCross(symbol,direction,k,false);
  macdClosedCandles++;renderMacdEvents();
 }
 function handleMacdSocketMessage(event){
@@ -337,6 +372,12 @@ $('start').addEventListener('click',()=>{if(running)return;macdMonitoringEnabled
 $('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}macdMonitoringEnabled=true;stopRequested=false;loadUniverse()});
 $('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);stopMacdMonitor();setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
 $('save').addEventListener('click',saveSettings);
+$('macdCandleWindow').addEventListener('change',()=>{pruneMacdEvents();renderMacdEvents()});
+$('macdCandleMode').addEventListener('change',()=>{
+ for(const symbol of macdWantedSymbols)removeLiveMacdEvent(symbol);
+ renderMacdEvents();
+ macdSetStatus($('macdCandleMode').value==='live'?'Live-candle detection enabled. Crossovers can appear and disappear before candle close.':'Closed-candle detection enabled. Crossovers are confirmed only after candle close.',!!(macdSocket&&macdSocket.readyState===WebSocket.OPEN));
+});
 $('refresh').addEventListener('change',()=>{if(running&&!scanBusy){clearTimeout(loopTimer);if($('refresh').value==='0'){running=false;setRunning(false)}else loopTimer=setTimeout(loadUniverse,$('refresh').value==='continuous'?0:Number($('refresh').value)*1000)}});
 loadSettings();
 })();
