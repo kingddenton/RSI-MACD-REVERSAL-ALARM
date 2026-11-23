@@ -247,7 +247,7 @@ async function syncMacdUniverse(universe){
  const nextSymbols=new Set(universe.map(item=>item.symbol));
  const added=[...nextSymbols].filter(symbol=>!macdStates.has(symbol));
  const removed=[...macdWantedSymbols].filter(symbol=>!nextSymbols.has(symbol));
- if(!added.length&&!removed.length&&macdSocket&&macdSocket.readyState===WebSocket.OPEN){
+ if(!added.length&&!removed.length&&macdSocket&&[WebSocket.CONNECTING,WebSocket.OPEN].includes(macdSocket.readyState)){
   $('macdMonitored').textContent=String(nextSymbols.size);return;
  }
  for(const symbol of removed)macdStates.delete(symbol);
