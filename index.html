@@ -191,9 +191,9 @@ function rsiValuesFor(symbol){
  return values;
 }
 function renderRsiQualified(){
- const rows=[...rsiQualifiedMap.values()].sort((a,b)=>Math.min(b['1m'],b['3m'],b['5m'])-Math.min(a['1m'],a['3m'],a['5m']));
+ const rows=[...rsiQualifiedMap.values()].sort((a,b)=>Math.max(b['3m'],b['5m'],b['15m'])-Math.max(a['3m'],a['5m'],a['15m']));
  $('rsiQualified').textContent=String(rows.length);
- $('rsiQualifiedRows').innerHTML=rows.length?rows.map(row=>'<tr><td><b>'+row.symbol+'</b></td><td class="positive num">'+row['1m'].toFixed(2)+'</td><td class="positive num">'+row['3m'].toFixed(2)+'</td><td class="positive num">'+row['5m'].toFixed(2)+'</td><td class="positive">QUALIFIED</td></tr>').join(''):'<tr><td colspan="5" class="muted">No coins currently have RSI above 70 on all three timeframes.</td></tr>';
+ $('rsiQualifiedRows').innerHTML=rows.length?rows.map(row=>'<tr><td><b>'+row.symbol+'</b></td><td class="num">'+row['3m'].toFixed(2)+'</td><td class="num">'+row['5m'].toFixed(2)+'</td><td class="num">'+row['15m'].toFixed(2)+'</td><td class="positive">QUALIFIED</td></tr>').join(''):'<tr><td colspan="5" class="muted">No coins currently have RSI above 70 on any of the three timeframes.</td></tr>';
  $('rsiCandles').textContent=String(rsiClosedCandles);
 }
 function evaluateRsiSymbol(symbol){
