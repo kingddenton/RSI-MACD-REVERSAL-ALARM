@@ -98,11 +98,12 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 <section class="panel monitor-panel" id="macdMonitorPanel">
  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
   <div><h2 style="font-size:16px;margin:0">MACD CROSSOVER MONITOR</h2>
-   <div class="note">Standard MACD 12, 26, 9 · 1-minute candles · <span id="macdModeDescription">closed-candle confirmation (default)</span></div>
+   <div class="note">Standard MACD 12, 26, 9 · <span id="macdTimeframeDescription">1-minute</span> candles · <span id="macdModeDescription">closed-candle confirmation (default)</span></div>
   </div>
   <div class="macd-state"><span class="macd-dot" id="macdWsDot"></span><b id="macdWsState">Not connected</b></div>
  </div>
  <div class="controls" style="margin-top:12px">
+  <div class="field"><label for="macdInterval">MACD ALARM TIMEFRAME</label><select id="macdInterval"><option value="1m" selected>1 minute</option><option value="3m">3 minutes</option><option value="5m">5 minutes</option></select></div>
   <div class="field"><label for="macdCandleWindow">CROSSOVER DISPLAY WINDOW · CANDLES</label><input id="macdCandleWindow" type="number" min="1" max="100" step="1" value="5"></div>
   <div class="field"><label for="macdCandleMode">CANDLE DETECTION MODE</label><select id="macdCandleMode"><option value="closed" selected>Closed candle · Default</option><option value="live">Live candle · Intrabar</option></select></div>
  </div>
@@ -154,7 +155,7 @@ const diagnostics={requests:0,peakRequests:0};
 const fmt=n=>Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
 function setStatus(message,error=false){$('status').textContent=message;$('status').className='status'+(error?' negative':'')}
 function setRunning(active){$('start').classList.toggle('running',active);$('start').textContent=active?'Scanning…':'Start scanning'}
-function settings(){return {topCount:$('topCount').value,bottomCount:$('bottomCount').value,volume:$('volume').value,workers:$('workers').value,refresh:$('refresh').value,rsiEntryThreshold:$('rsiEntryThreshold').value,rsiExitThreshold:$('rsiExitThreshold').value,macdCandleWindow:$('macdCandleWindow').value,macdCandleMode:$('macdCandleMode').value}}
+function settings(){return {topCount:$('topCount').value,bottomCount:$('bottomCount').value,volume:$('volume').value,workers:$('workers').value,refresh:$('refresh').value,rsiEntryThreshold:$('rsiEntryThreshold').value,rsiExitThreshold:$('rsiExitThreshold').value,macdCandleWindow:$('macdCandleWindow').value,macdCandleMode:$('macdCandleMode').value,macdInterval:$('macdInterval').value}}
 function saveSettings(){try{localStorage.setItem(STORE,JSON.stringify(settings()));setStatus('Settings saved in this browser.')}catch(e){setStatus('Could not save settings in this browser.',true)}}
 function loadSettings(){try{const s=JSON.parse(localStorage.getItem(STORE)||'{}');for(const [k,v] of Object.entries(s))if($(k))$(k).value=v}catch(e){}}
 async function acquireRequestSlot(){
@@ -332,7 +333,8 @@ function stopRsiMonitor(){
 
 /* MACD crossover monitor: REST is used only to seed historical closes.
    Live updates and crossover detection are driven by Binance WebSocket kline events. */
-const MACD_INTERVAL='1m',MACD_FAST=12,MACD_SLOW=26,MACD_SIGNAL=9,MACD_SEED_LIMIT=150;
+let MACD_INTERVAL='1m';
+const MACD_FAST=12,MACD_SLOW=26,MACD_SIGNAL=9,MACD_SEED_LIMIT=150;
 const MACD_WS_BASE='wss://fstream.binance.com/market/stream?streams=';
 let macdMonitoringEnabled=false,macdSocket=null,macdReconnectTimer=null,macdRenewTimer=null;
 let macdReconnectDelay=1500,macdWantedSymbols=new Set(),macdCandidateSymbols=new Set(),macdStates=new Map();
@@ -696,6 +698,21 @@ $('start').addEventListener('click',()=>{if(running)return;macdMonitoringEnabled
 $('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}macdMonitoringEnabled=true;emaMonitoringEnabled=true;rsiMonitoringEnabled=true;stopRequested=false;loadUniverse()});
 $('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);stopMacdMonitor();stopEmaMonitor();stopRsiMonitor();setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
 $('save').addEventListener('click',saveSettings);
+$('macdInterval').addEventListener('change',()=>{
+ const next=$('macdInterval').value;
+ if(!['1m','3m','5m'].includes(next))return;
+ MACD_INTERVAL=next;
+ $('macdTimeframeDescription').textContent=next==='1m'?'1-minute':next==='3m'?'3-minute':'5-minute';
+ macdBullEvents=[];macdBearEvents=[];macdClosedCandles=0;
+ renderMacdEvents();
+ if(macdMonitoringEnabled){
+  clearTimeout(macdReconnectTimer);clearTimeout(macdRenewTimer);closeMacdSocket();
+  macdWantedSymbols.clear();macdStates.clear();
+  $('macdMonitored').textContent='0';
+  macdSetStatus('Switching MACD alarm to '+next+' candles and reinitializing qualified coins…');
+  syncMacdUniverse([...macdCandidateSymbols].map(symbol=>({symbol}))).catch(error=>macdSetStatus('Timeframe switch failed: '+(error.message||error)));
+ }else macdSetStatus('MACD alarm timeframe set to '+next+'. It will be used when scanning starts.');
+});
 $('macdCandleWindow').addEventListener('change',()=>{
  pruneMacdEvents();renderMacdEvents();
  if(macdMonitoringEnabled)syncMacdUniverse([...macdCandidateSymbols].map(symbol=>({symbol}))).catch(error=>macdSetStatus('MACD subscription update failed: '+(error.message||error)));
