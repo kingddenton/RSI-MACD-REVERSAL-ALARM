@@ -75,7 +75,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 <section class="panel monitor-panel" id="macdMonitorPanel">
  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
   <div><h2 style="font-size:16px;margin:0">MACD CROSSOVER MONITOR</h2>
-   <div class="note">Standard MACD 12, 26, 9 · 1-minute candles · closed-candle confirmation only</div>
+   <div class="note">Standard MACD 12, 26, 9 · 1-minute candles · <span id="macdModeDescription">closed-candle confirmation (default)</span></div>
   </div>
   <div class="macd-state"><span class="macd-dot" id="macdWsDot"></span><b id="macdWsState">Not connected</b></div>
  </div>
@@ -94,7 +94,7 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
   <div class="macd-box macd-bull"><h3>NEW BULLISH CROSSOVERS · LAST 10</h3><div class="macd-events" id="macdBullEvents"><span class="note">No new bullish crossovers yet.</span></div></div>
   <div class="macd-box macd-bear"><h3>NEW BEARISH CROSSOVERS · LAST 10</h3><div class="macd-events" id="macdBearEvents"><span class="note">No new bearish crossovers yet.</span></div></div>
  </div>
- <p class="note" style="margin:10px 0 0">A crossover is recorded only when the MACD line crosses its signal line on a completed 1-minute candle. Historical seed data initializes the indicator but never creates an alert.</p>
+ <p class="note" id="macdRuleNote" style="margin:10px 0 0">Closed mode: a crossover is recorded only after the 1-minute candle closes. Live mode: a provisional crossover can appear or disappear while the candle forms. Historical seed data initializes MACD but never creates an alert.</p>
 </section>
 
 <section class="panel">
@@ -376,7 +376,10 @@ $('macdCandleWindow').addEventListener('change',()=>{pruneMacdEvents();renderMac
 $('macdCandleMode').addEventListener('change',()=>{
  for(const symbol of macdWantedSymbols)removeLiveMacdEvent(symbol);
  renderMacdEvents();
- macdSetStatus($('macdCandleMode').value==='live'?'Live-candle detection enabled. Crossovers can appear and disappear before candle close.':'Closed-candle detection enabled. Crossovers are confirmed only after candle close.',!!(macdSocket&&macdSocket.readyState===WebSocket.OPEN));
+ const live=$('macdCandleMode').value==='live';
+ $('macdModeDescription').textContent=live?'live intrabar detection':'closed-candle confirmation (default)';
+ $('macdRuleNote').textContent=live?'Live mode: a provisional crossover can appear or disappear while the current 1-minute candle forms. It becomes a confirmed crossover only if it remains at candle close.':'Closed mode: a crossover is recorded only after the 1-minute candle closes. Historical seed data initializes MACD but never creates an alert.';
+ macdSetStatus(live?'Live-candle detection enabled. Crossovers can appear and disappear before candle close.':'Closed-candle detection enabled. Crossovers are confirmed only after candle close.',!!(macdSocket&&macdSocket.readyState===WebSocket.OPEN));
 });
 $('refresh').addEventListener('change',()=>{if(running&&!scanBusy){clearTimeout(loopTimer);if($('refresh').value==='0'){running=false;setRunning(false)}else loopTimer=setTimeout(loadUniverse,$('refresh').value==='continuous'?0:Number($('refresh').value)*1000)}});
 loadSettings();
