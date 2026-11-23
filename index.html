@@ -115,21 +115,21 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
  </div>
  <div class="status" id="macdStatus">Start the scanner to seed candle history and connect the Binance market WebSocket.</div>
  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px">
-  <div><b style="font-size:13px">EMA ALIGNMENT MONITOR · 7 / 25 / 99 · 1M CLOSED CANDLES</b><div class="note">RSI-qualified coins only</div></div>
+  <div><b style="font-size:13px">EMA 7 / 25 FRESH CROSSOVER MONITOR · 1M CLOSED CANDLES</b><div class="note">RSI-qualified coins only · crossover stays listed until the opposite cross</div></div>
   <div class="macd-state"><span class="macd-dot" id="emaWsDot"></span><b id="emaWsState">Not connected</b></div>
  </div>
  <div class="stats" style="margin-top:8px">
   <span>EMA monitored: <b id="emaMonitored">0</b></span>
   <span>Closed candles processed: <b id="emaCandles">0</b></span>
-  <span>Bullish aligned: <b id="emaBullCount">0</b></span>
-  <span>Bearish aligned: <b id="emaBearCount">0</b></span>
+  <span>Bullish crosses: <b id="emaBullCount">0</b></span>
+  <span>Bearish crosses: <b id="emaBearCount">0</b></span>
  </div>
  <div class="status" id="emaStatus">Waiting for RSI-qualified candidates.</div>
  <div class="macd-columns">
    <div class="macd-box macd-bull"><h3>MACD · BULLISH CROSSOVERS · LAST 10</h3><div class="macd-events" id="macdBullEvents"><span class="note">No new bullish crossovers yet.</span></div></div>
    <div class="macd-box macd-bear"><h3>MACD · BEARISH CROSSOVERS · LAST 10</h3><div class="macd-events" id="macdBearEvents"><span class="note">No new bearish crossovers yet.</span></div></div>
-   <div class="ema-box ema-bull"><h3>EMA · BULLISH · 7 &gt; 25 &gt; 99</h3><div class="ema-list" id="emaBullRows"><span class="note">No bullish alignment yet.</span></div></div>
-   <div class="ema-box ema-bear"><h3>EMA · BEARISH · 7 &lt; 25 &lt; 99</h3><div class="ema-list" id="emaBearRows"><span class="note">No bearish alignment yet.</span></div></div>
+   <div class="ema-box ema-bull"><h3>EMA · BULLISH 7/25 CROSSOVERS · LAST 15</h3><div class="ema-list" id="emaBullRows"><span class="note">No bullish alignment yet.</span></div></div>
+   <div class="ema-box ema-bear"><h3>EMA · BEARISH 7/25 CROSSOVERS · LAST 15</h3><div class="ema-list" id="emaBearRows"><span class="note">No bearish alignment yet.</span></div></div>
   </div>
   <p class="note" id="macdRuleNote" style="margin:10px 0 0">Closed mode: a crossover is recorded only after the selected timeframe candle closes. Live mode: a provisional crossover can appear or disappear while the candle forms. Historical seed data initializes MACD but never creates an alert.</p>
 </section>
@@ -522,9 +522,9 @@ function stopMacdMonitor(){
 }
 
 
-/* EMA alignment monitor: consumes RSI-qualified candidates and independently
+/* EMA crossover monitor: consumes RSI-qualified candidates and independently
    monitors their completed 1m candles, following the MACD downstream pattern. */
-const EMA_INTERVAL='1m',EMA_FAST=7,EMA_MID=25,EMA_SLOW=99,EMA_SEED_LIMIT=150;
+const EMA_INTERVAL='1m',EMA_FAST=7,EMA_MID=25,EMA_SEED_LIMIT=150,EMA_MAX_EVENTS=15;
 const EMA_WS_BASE='wss://fstream.binance.com/market/stream?streams=';
 let emaMonitoringEnabled=false,emaSocket=null,emaReconnectTimer=null,emaRenewTimer=null;
 let emaReconnectDelay=1500,emaWantedSymbols=new Set(),emaStates=new Map(),emaClosedCandles=0;
@@ -535,26 +535,31 @@ function emaSetStatus(message,connected=false){
  $('emaWsState').textContent=connected?'Connected':'Disconnected';
  $('emaWsDot').className='macd-dot'+(connected?' live':'');
 }
-function calculateEmaValues(candles){
- const closes=candles.map(c=>c.close);
- const fast=emaSeries(closes,EMA_FAST),mid=emaSeries(closes,EMA_MID),slow=emaSeries(closes,EMA_SLOW);
- const i=closes.length-1;
- if(i<0||fast[i]===null||mid[i]===null||slow[i]===null)return null;
- return {fast:fast[i],mid:mid[i],slow:slow[i]};
+function calculateEmaPairSeries(candles){
+ const closes=candles.map(c=>c.close),fast=emaSeries(closes,EMA_FAST),mid=emaSeries(closes,EMA_MID),out=[];
+ for(let i=0;i<closes.length;i++)if(fast[i]!==null&&mid[i]!==null)out.push({fast:fast[i],mid:mid[i],diff:fast[i]-mid[i]});
+ return out;
 }
-function updateEmaAlignment(symbol){
+function addEmaCrossEvent(symbol,kind,values){
+ const target=kind==='bull'?emaBullSymbols:emaBearSymbols,opposite=kind==='bull'?emaBearSymbols:emaBullSymbols;
+ opposite.delete(symbol);
+ target.delete(symbol);
+ target.set(symbol,values);
+ while(target.size>EMA_MAX_EVENTS)target.delete(target.keys().next().value);
+}
+function updateEmaCross(symbol){
  const state=emaStates.get(symbol);if(!state)return;
- const values=calculateEmaValues(state.candles);if(!values)return;
- emaBullSymbols.delete(symbol);emaBearSymbols.delete(symbol);
- if(values.fast>values.mid&&values.mid>values.slow)emaBullSymbols.set(symbol,values);
- else if(values.fast<values.mid&&values.mid<values.slow)emaBearSymbols.set(symbol,values);
+ const rows=calculateEmaPairSeries(state.candles);if(rows.length<2)return;
+ const previous=rows[rows.length-2],current=rows[rows.length-1];
+ if(previous.diff<=0&&current.diff>0)addEmaCrossEvent(symbol,'bull',current);
+ else if(previous.diff>=0&&current.diff<0)addEmaCrossEvent(symbol,'bear',current);
  renderEmaRows();
 }
 function renderEmaRows(){
- const render=items=>items.size?[...items.keys()].sort((a,b)=>a.localeCompare(b)).map(symbol=>{
+ const render=items=>items.size?[...items.keys()].reverse().map(symbol=>{
   const change=market24hChange.get(symbol),valid=Number.isFinite(change);
   return '<div class="ema-item"><strong>'+symbol+'</strong><b class="'+(valid?(change>=0?'positive':'negative'):'muted')+'">'+(valid?(change>=0?'+':'')+change.toFixed(2)+'%':'—')+'</b></div>';
- }).join(''):'<span class="note">No alignment currently.</span>';
+ }).join(''):'<span class="note">No fresh crossovers yet.</span>';
  $('emaBullRows').innerHTML=render(emaBullSymbols);
  $('emaBearRows').innerHTML=render(emaBearSymbols);
  $('emaBullCount').textContent=String(emaBullSymbols.size);
@@ -570,7 +575,7 @@ function processEmaKline(message){
  state.candles.push({close,closeTime});
  if(state.candles.length>EMA_SEED_LIMIT+20)state.candles.splice(0,state.candles.length-(EMA_SEED_LIMIT+20));
  state.lastCloseTime=closeTime;emaClosedCandles++;
- updateEmaAlignment(symbol);
+ updateEmaCross(symbol);
 }
 function handleEmaSocketMessage(event){
  let payload;try{payload=JSON.parse(event.data)}catch(error){return}
@@ -626,7 +631,7 @@ async function syncEmaUniverse(universe){
   });
   let success=0,failed=[];
   seeded.output.forEach((result,index)=>{
-   if(result&&!result.error){emaStates.set(result.symbol,result);updateEmaAlignment(result.symbol);success++}
+   if(result&&!result.error){emaStates.set(result.symbol,result);success++}
    else failed.push(added[index]+': '+(result&&result.error||'seed failed'));
   });
   if(failed.length)emaSetStatus('Seeded '+success+'/'+added.length+' new coins. '+failed.slice(0,3).join(' · '));
