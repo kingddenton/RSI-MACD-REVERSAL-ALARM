@@ -370,7 +370,7 @@ function pruneMacdEvents(){
 function renderMacdEvents(){
  const max=macdWindowSize();
  const render=events=>events.length?events.map(event=>
-  '<div class="macd-event"><strong>'+event.symbol+'</strong><span class="macd-meta">Candle '+event.candleNo+'/'+max+'</span><b class="'+(Number.isFinite(event.rsi1m)&&event.rsi1m<80?'positive':'negative')+'">RSI '+(Number.isFinite(event.rsi1m)?event.rsi1m.toFixed(2):'—')+'</b></div>'
+  '<div class="macd-event"><strong>'+event.symbol+'</strong><span class="macd-meta">Candle '+event.candleNo+'/'+max+'</span><b class="'+(Number.isFinite(event.rsi1m)?(event.rsi1m<80?'positive':'negative'):'muted')+'">RSI '+(Number.isFinite(event.rsi1m)?event.rsi1m.toFixed(2):'—')+'</b></div>'
  ).join(''):'<span class="note">No new crossovers in the current candle window.</span>';
  $('macdBullEvents').innerHTML=render(macdBullEvents);
  $('macdBearEvents').innerHTML=render(macdBearEvents);
