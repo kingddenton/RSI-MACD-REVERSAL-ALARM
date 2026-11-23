@@ -20,6 +20,22 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 .note{font-size:12px;color:var(--muted)}.muted{color:var(--muted)}.num{font-weight:800}.positive{color:var(--green)}.negative{color:var(--red)}
 #universeDetails>summary{list-style:none}#universeDetails>summary::-webkit-details-marker{display:none}#universeDetails>summary:after{content:'＋';color:var(--blue);font-size:16px}#universeDetails[open]>summary:after{content:'−'}
 @media(max-width:650px){.perf-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){main{padding:11px}h1{font-size:19px}.panel{padding:11px}}
+
+.macd-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+.macd-box{background:#0c1625;border:1px solid var(--line);border-radius:9px;padding:10px;min-width:0}
+.macd-box h3{font-size:13px;margin:0 0 8px}
+.macd-bull h3{color:var(--green)}.macd-bear h3{color:var(--red)}
+.macd-events{display:flex;flex-direction:column;gap:7px}
+.macd-event{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px}
+.macd-event:last-child{border-bottom:0}
+.macd-event strong{font-size:14px}
+.macd-meta{color:var(--muted);font-size:11px;text-align:right}
+.macd-state{display:inline-flex;align-items:center;gap:6px}
+.macd-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
+.macd-dot.live{background:var(--green);box-shadow:0 0 8px #36d39988}
+.macd-dot.wait{background:var(--amber)}
+@media(max-width:650px){.macd-columns{grid-template-columns:1fr}}
+
 </style>
 </head>
 <body><main>
@@ -54,6 +70,28 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
  </div>
  <div class="status" id="diagStatus">Waiting for the first universe load.</div>
 </details>
+
+
+<section class="panel monitor-panel" id="macdMonitorPanel">
+ <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+  <div><h2 style="font-size:16px;margin:0">MACD CROSSOVER MONITOR</h2>
+   <div class="note">Standard MACD 12, 26, 9 · 1-minute candles · closed-candle confirmation only</div>
+  </div>
+  <div class="macd-state"><span class="macd-dot" id="macdWsDot"></span><b id="macdWsState">Not connected</b></div>
+ </div>
+ <div class="stats" style="margin-top:12px">
+  <span>Monitored coins: <b id="macdMonitored">0</b></span>
+  <span>Closed candles processed: <b id="macdCandles">0</b></span>
+  <span>New bullish crosses: <b id="macdBullCount">0</b></span>
+  <span>New bearish crosses: <b id="macdBearCount">0</b></span>
+ </div>
+ <div class="status" id="macdStatus">Start the scanner to seed candle history and connect the Binance market WebSocket.</div>
+ <div class="macd-columns">
+  <div class="macd-box macd-bull"><h3>NEW BULLISH CROSSOVERS · LAST 10</h3><div class="macd-events" id="macdBullEvents"><span class="note">No new bullish crossovers yet.</span></div></div>
+  <div class="macd-box macd-bear"><h3>NEW BEARISH CROSSOVERS · LAST 10</h3><div class="macd-events" id="macdBearEvents"><span class="note">No new bearish crossovers yet.</span></div></div>
+ </div>
+ <p class="note" style="margin:10px 0 0">A crossover is recorded only when the MACD line crosses its signal line on a completed 1-minute candle. Historical seed data initializes the indicator but never creates an alert.</p>
+</section>
 
 <section class="panel">
  <details id="universeDetails" open>
@@ -100,6 +138,151 @@ async function mapLimit(items,limit,fn){
  await Promise.all(Array.from({length:Math.min(Math.max(1,limit),items.length)},worker));
  return {output,done,peak};
 }
+
+/* MACD crossover monitor: REST is used only to seed historical closes.
+   Live updates and crossover detection are driven by Binance WebSocket kline events. */
+const MACD_INTERVAL='1m',MACD_FAST=12,MACD_SLOW=26,MACD_SIGNAL=9,MACD_SEED_LIMIT=150;
+const MACD_WS_BASE='wss://fstream.binance.com/market/stream?streams=';
+let macdMonitoringEnabled=false,macdSocket=null,macdReconnectTimer=null,macdRenewTimer=null;
+let macdReconnectDelay=1500,macdWantedSymbols=new Set(),macdStates=new Map();
+let macdBullEvents=[],macdBearEvents=[],macdClosedCandles=0,macdWsMessages=0;
+
+function macdSetStatus(message,connected=false){
+ $('macdStatus').textContent=message;
+ $('macdWsState').textContent=connected?'Connected':'Disconnected';
+ $('macdWsDot').className='macd-dot'+(connected?' live':'');
+}
+function emaSeries(values,period){
+ const out=new Array(values.length).fill(null);
+ if(values.length<period)return out;
+ let seed=0;for(let i=0;i<period;i++)seed+=values[i];
+ let previous=seed/period;out[period-1]=previous;
+ const alpha=2/(period+1);
+ for(let i=period;i<values.length;i++){previous=values[i]*alpha+previous*(1-alpha);out[i]=previous}
+ return out;
+}
+function calculateMacdSeries(candles){
+ const closes=candles.map(c=>c.close),times=candles.map(c=>c.closeTime);
+ const fast=emaSeries(closes,MACD_FAST),slow=emaSeries(closes,MACD_SLOW);
+ const macdValues=[],macdTimes=[];
+ for(let i=0;i<closes.length;i++)if(fast[i]!==null&&slow[i]!==null){macdValues.push(fast[i]-slow[i]);macdTimes.push(times[i])}
+ const signal=emaSeries(macdValues,MACD_SIGNAL),out=[];
+ for(let i=0;i<macdValues.length;i++)if(signal[i]!==null)out.push({closeTime:macdTimes[i],macd:macdValues[i],signal:signal[i],hist:macdValues[i]-signal[i]});
+ return out;
+}
+function renderMacdEvents(){
+ const render=(events,kind)=>events.length?events.map(event=>
+  '<div class="macd-event"><div><strong>'+event.symbol+'</strong><div class="'+(kind==='bull'?'positive':'negative')+'">'+(kind==='bull'?'BULLISH CROSS':'BEARISH CROSS')+'</div></div><div class="macd-meta">'+event.time+'<br>Close: '+event.close+'</div></div>'
+ ).join(''):'<span class="note">No new '+(kind==='bull'?'bullish':'bearish')+' crossovers yet.</span>';
+ $('macdBullEvents').innerHTML=render(macdBullEvents,'bull');
+ $('macdBearEvents').innerHTML=render(macdBearEvents,'bear');
+ $('macdBullCount').textContent=String(macdBullEvents.length);
+ $('macdBearCount').textContent=String(macdBearEvents.length);
+ $('macdCandles').textContent=String(macdClosedCandles);
+}
+function recordMacdCross(symbol,kind,kline){
+ const event={symbol,time:new Date(Number(kline.T)).toLocaleTimeString(),close:Number(kline.c).toPrecision(8)};
+ if(kind==='bull'){macdBullEvents.unshift(event);macdBullEvents=macdBullEvents.slice(0,10)}
+ else{macdBearEvents.unshift(event);macdBearEvents=macdBearEvents.slice(0,10)}
+ renderMacdEvents();
+ macdSetStatus((kind==='bull'?'New bullish':'New bearish')+' MACD crossover: '+symbol+' · confirmed on the closed 1m candle.',true);
+}
+function processMacdKline(message){
+ const k=message&&message.k;
+ if(!k||!k.x||k.i!==MACD_INTERVAL)return;
+ const symbol=k.s,state=macdStates.get(symbol);
+ if(!state)return;
+ const closeTime=Number(k.T);
+ if(!Number.isFinite(closeTime)||closeTime<=state.lastCloseTime)return;
+ state.candles.push({close:Number(k.c),closeTime});
+ if(state.candles.length>220)state.candles.splice(0,state.candles.length-220);
+ state.lastCloseTime=closeTime;
+ const rows=calculateMacdSeries(state.candles);
+ if(rows.length>=2){
+  const previous=rows[rows.length-2],current=rows[rows.length-1];
+  if(previous.hist<=0&&current.hist>0)recordMacdCross(symbol,'bull',k);
+  else if(previous.hist>=0&&current.hist<0)recordMacdCross(symbol,'bear',k);
+ }
+ macdClosedCandles++;renderMacdEvents();
+}
+function handleMacdSocketMessage(event){
+ let payload;try{payload=JSON.parse(event.data)}catch(error){return}
+ macdWsMessages++;
+ if(payload&&payload.data)processMacdKline(payload.data);
+}
+function closeMacdSocket(){
+ clearTimeout(macdRenewTimer);
+ const socket=macdSocket;macdSocket=null;
+ if(socket){socket.onclose=null;try{socket.close()}catch(error){}}
+}
+function connectMacdSocket(){
+ if(!macdMonitoringEnabled||!macdWantedSymbols.size)return;
+ clearTimeout(macdReconnectTimer);closeMacdSocket();
+ const streams=[...macdWantedSymbols].map(symbol=>symbol.toLowerCase()+'@kline_'+MACD_INTERVAL);
+ if(streams.length>1024){macdSetStatus('Cannot connect: Binance allows a maximum of 1,024 streams per connection.');return}
+ const url=MACD_WS_BASE+streams.join('/');
+ const socket=new WebSocket(url);macdSocket=socket;
+ macdSetStatus('Connecting to Binance market WebSocket for '+streams.length+' candle streams…');
+ socket.onopen=()=>{
+  if(macdSocket!==socket)return;
+  macdReconnectDelay=1500;
+  macdSetStatus('Live · receiving '+streams.length+' Binance 1m kline streams.',true);
+  clearTimeout(macdRenewTimer);
+  macdRenewTimer=setTimeout(()=>{if(macdSocket===socket)socket.close()},23*60*60*1000+50*60*1000);
+ };
+ socket.onmessage=event=>{if(macdSocket===socket)handleMacdSocketMessage(event)};
+ socket.onerror=()=>{if(macdSocket===socket)macdSetStatus('WebSocket error. Waiting for Binance connection recovery.')};
+ socket.onclose=()=>{
+  if(macdSocket!==socket)return;
+  macdSocket=null;clearTimeout(macdRenewTimer);
+  if(macdMonitoringEnabled&&macdWantedSymbols.size){
+   const delay=macdReconnectDelay;macdReconnectDelay=Math.min(macdReconnectDelay*2,30000);
+   macdSetStatus('WebSocket disconnected. Reconnecting in '+Math.ceil(delay/1000)+' seconds…');
+   macdReconnectTimer=setTimeout(connectMacdSocket,delay);
+  }else macdSetStatus('WebSocket stopped.');
+ };
+}
+async function syncMacdUniverse(universe){
+ if(!macdMonitoringEnabled)return;
+ const nextSymbols=new Set(universe.map(item=>item.symbol));
+ const added=[...nextSymbols].filter(symbol=>!macdStates.has(symbol));
+ const removed=[...macdWantedSymbols].filter(symbol=>!nextSymbols.has(symbol));
+ if(!added.length&&!removed.length&&macdSocket&&macdSocket.readyState===WebSocket.OPEN){
+  $('macdMonitored').textContent=String(nextSymbols.size);return;
+ }
+ for(const symbol of removed)macdStates.delete(symbol);
+ macdWantedSymbols=nextSymbols;
+ $('macdMonitored').textContent=String(nextSymbols.size);
+ if(!nextSymbols.size){closeMacdSocket();macdSetStatus('No coins are currently selected in the market universe.');return}
+ if(added.length){
+  macdSetStatus('Seeding '+added.length+' newly selected coins with closed 1m candles…');
+  const seeded=await mapLimit(added,requestConcurrency,async symbol=>{
+   const rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+MACD_INTERVAL+'&limit='+MACD_SEED_LIMIT);
+   if(!Array.isArray(rows))throw new Error('Invalid candle history');
+   const now=Date.now();
+   const candles=rows.filter(row=>Number(row[6])<now).map(row=>({close:Number(row[4]),closeTime:Number(row[6])}));
+   if(candles.length<MACD_SLOW+MACD_SIGNAL)throw new Error('Insufficient closed candle history');
+   return {symbol,candles,lastCloseTime:candles[candles.length-1].closeTime};
+  });
+  let success=0,failed=[];
+  seeded.output.forEach((result,index)=>{
+   if(result&&!result.error){macdStates.set(result.symbol,result);success++}
+   else failed.push(added[index]+': '+(result&&result.error||'seed failed'));
+  });
+  if(failed.length)macdSetStatus('Seeded '+success+'/'+added.length+' new coins. '+failed.slice(0,3).join(' · '));
+ }
+ const active=[...macdWantedSymbols].filter(symbol=>macdStates.has(symbol));
+ macdWantedSymbols=new Set(active);
+ $('macdMonitored').textContent=String(active.length);
+ if(!active.length){closeMacdSocket();macdSetStatus('No coins could be initialized. Check Binance REST access.');return}
+ connectMacdSocket();
+}
+function stopMacdMonitor(){
+ macdMonitoringEnabled=false;clearTimeout(macdReconnectTimer);clearTimeout(macdRenewTimer);
+ closeMacdSocket();macdWantedSymbols.clear();macdStates.clear();
+ $('macdMonitored').textContent='0';macdSetStatus('MACD monitor stopped.');
+}
+
 function renderUniverse(universe){
  $('universeCount').textContent=universe.length;
  $('universeRows').innerHTML=universe.length?universe.map((item,index)=>'<tr><td>'+(index+1)+'</td><td class="'+(item.change>=0?'positive':'negative')+'">'+(item.change>=0?'GAINER':'LOSER')+'</td><td><b>'+item.symbol+'</b></td><td class="num '+(item.change>=0?'positive':'negative')+'">'+(item.change>=0?'+':'')+fmt(item.change)+'%</td><td>'+fmt(item.volume)+'</td></tr>').join(''):'<tr><td colspan="5" class="muted">No contracts passed the current universe settings.</td></tr>';
@@ -131,6 +314,7 @@ async function loadUniverse(){
   $('eligible').textContent=eligible.length;$('selected').textContent=universe.length;$('eligibleCount').textContent=eligible.length;
   $('universeRule').textContent='Top '+top.length+' / Bottom '+bottom.length+' · 24H price change';
   $('volumeRule').textContent=fmt(minVolume)+' USDT';renderUniverse(universe);
+  await syncMacdUniverse(universe);
   const duration=(Date.now()-started)/1000;
   $('last').textContent=new Date().toLocaleTimeString();
   $('dContracts').textContent=fmt(info.symbols.length);$('dPerpetuals').textContent=fmt(perpetuals.length);
@@ -149,9 +333,9 @@ async function loadUniverse(){
   }else if(!running)setRunning(false);
  }
 }
-$('start').addEventListener('click',()=>{if(running)return;running=true;stopRequested=false;clearTimeout(loopTimer);setRunning(true);loadUniverse()});
-$('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}stopRequested=false;loadUniverse()});
-$('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
+$('start').addEventListener('click',()=>{if(running)return;macdMonitoringEnabled=true;running=true;stopRequested=false;clearTimeout(loopTimer);setRunning(true);loadUniverse()});
+$('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}macdMonitoringEnabled=true;stopRequested=false;loadUniverse()});
+$('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);stopMacdMonitor();setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
 $('save').addEventListener('click',saveSettings);
 $('refresh').addEventListener('change',()=>{if(running&&!scanBusy){clearTimeout(loopTimer);if($('refresh').value==='0'){running=false;setRunning(false)}else loopTimer=setTimeout(loadUniverse,$('refresh').value==='continuous'?0:Number($('refresh').value)*1000)}});
 loadSettings();
