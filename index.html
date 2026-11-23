@@ -34,7 +34,15 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 .macd-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
 .macd-dot.live{background:var(--green);box-shadow:0 0 8px #36d39988}
 .macd-dot.wait{background:var(--amber)}
-@media(max-width:650px){.macd-columns{grid-template-columns:1fr}}
+.ema-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+.ema-box{background:#0c1625;border:1px solid var(--line);border-radius:9px;padding:10px;min-width:0}
+.ema-box h3{font-size:13px;margin:0 0 8px}
+.ema-bull h3{color:var(--green)}.ema-bear h3{color:var(--red)}
+.ema-list{display:flex;flex-direction:column;gap:7px}
+.ema-item{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px}
+.ema-item:last-child{border-bottom:0}
+.ema-meta{color:var(--muted);font-size:11px;text-align:right}
+@media(max-width:650px){.macd-columns,.ema-columns{grid-template-columns:1fr}}
 
 </style>
 </head>
@@ -113,6 +121,27 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
  <p class="note" id="macdRuleNote" style="margin:10px 0 0">Closed mode: a crossover is recorded only after the 1-minute candle closes. Live mode: a provisional crossover can appear or disappear while the candle forms. Historical seed data initializes MACD but never creates an alert.</p>
 </section>
 
+<section class="panel monitor-panel" id="emaMonitorPanel">
+ <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+  <div><h2 style="font-size:16px;margin:0">EMA ALIGNMENT MONITOR</h2>
+   <div class="note">EMA 7 / 25 / 99 · 1-minute candles · closed-candle alignment · RSI-qualified coins only</div>
+  </div>
+  <div class="macd-state"><span class="macd-dot" id="emaWsDot"></span><b id="emaWsState">Not connected</b></div>
+ </div>
+ <div class="stats" style="margin-top:12px">
+  <span>Monitored coins: <b id="emaMonitored">0</b></span>
+  <span>Closed candles processed: <b id="emaCandles">0</b></span>
+  <span>Bullish aligned: <b id="emaBullCount">0</b></span>
+  <span>Bearish aligned: <b id="emaBearCount">0</b></span>
+ </div>
+ <div class="status" id="emaStatus">Waiting for RSI-qualified candidates.</div>
+ <div class="ema-columns">
+  <div class="ema-box ema-bull"><h3>BULLISH · EMA 7 &gt; 25 &gt; 99</h3><div class="ema-list" id="emaBullRows"><span class="note">No bullish alignment yet.</span></div></div>
+  <div class="ema-box ema-bear"><h3>BEARISH · EMA 7 &lt; 25 &lt; 99</h3><div class="ema-list" id="emaBearRows"><span class="note">No bearish alignment yet.</span></div></div>
+ </div>
+ <p class="note" style="margin:10px 0 0">A coin remains in its column while the completed 1-minute candles maintain the full EMA alignment. It leaves when the alignment breaks or the coin is removed from the RSI candidate list.</p>
+</section>
+
 <section class="panel">
  <details id="universeDetails" open>
   <summary style="cursor:pointer;font-weight:800;display:flex;justify-content:space-between;gap:12px;align-items:center"><span>Selected Universe · <span id="universeCount">0</span> coins</span><span class="note">Tap to collapse / expand</span></summary>
@@ -166,12 +195,12 @@ const RSI_WS_BASE='wss://fstream.binance.com/market/stream?streams=';
 let rsiMonitoringEnabled=false,rsiSocket=null,rsiReconnectTimer=null,rsiRenewTimer=null;
 let rsiReconnectDelay=1500,rsiWantedSymbols=new Set(),rsiStates=new Map();
 let rsiQualifiedMap=new Map(),rsiClosedCandles=0;
-let macdSyncChain=Promise.resolve();
+let macdSyncChain=Promise.resolve(),emaSyncChain=Promise.resolve();
 const rsiThreshold=(id,fallback)=>{const n=Number($(id).value);return Number.isFinite(n)?Math.max(0,Math.min(100,n)):fallback};
 function queueMacdCandidateSync(){
- if(!macdMonitoringEnabled)return;
  const snapshot=[...rsiQualifiedMap.keys()].map(symbol=>({symbol}));
- macdSyncChain=macdSyncChain.then(()=>syncMacdUniverse(snapshot)).catch(error=>macdSetStatus('Candidate handoff error: '+(error.message||error)));
+ if(macdMonitoringEnabled)macdSyncChain=macdSyncChain.then(()=>syncMacdUniverse(snapshot)).catch(error=>macdSetStatus('Candidate handoff error: '+(error.message||error)));
+ if(emaMonitoringEnabled)emaSyncChain=emaSyncChain.then(()=>syncEmaUniverse(snapshot)).catch(error=>emaSetStatus('Candidate handoff error: '+(error.message||error)));
 }
 function rsiSetStatus(message,connected=false){
  $('rsiStatus').textContent=message;
@@ -493,6 +522,126 @@ function stopMacdMonitor(){
  $('macdMonitored').textContent='0';macdSetStatus('MACD monitor stopped.');
 }
 
+
+/* EMA alignment monitor: consumes RSI-qualified candidates and independently
+   monitors their completed 1m candles, following the MACD downstream pattern. */
+const EMA_INTERVAL='1m',EMA_FAST=7,EMA_MID=25,EMA_SLOW=99,EMA_SEED_LIMIT=150;
+const EMA_WS_BASE='wss://fstream.binance.com/market/stream?streams=';
+let emaMonitoringEnabled=false,emaSocket=null,emaReconnectTimer=null,emaRenewTimer=null;
+let emaReconnectDelay=1500,emaWantedSymbols=new Set(),emaStates=new Map(),emaClosedCandles=0;
+let emaBullSymbols=new Map(),emaBearSymbols=new Map();
+
+function emaSetStatus(message,connected=false){
+ $('emaStatus').textContent=message;
+ $('emaWsState').textContent=connected?'Connected':'Disconnected';
+ $('emaWsDot').className='macd-dot'+(connected?' live':'');
+}
+function calculateEmaValues(candles){
+ const closes=candles.map(c=>c.close);
+ const fast=emaSeries(closes,EMA_FAST),mid=emaSeries(closes,EMA_MID),slow=emaSeries(closes,EMA_SLOW);
+ const i=closes.length-1;
+ if(i<0||fast[i]===null||mid[i]===null||slow[i]===null)return null;
+ return {fast:fast[i],mid:mid[i],slow:slow[i]};
+}
+function updateEmaAlignment(symbol){
+ const state=emaStates.get(symbol);if(!state)return;
+ const values=calculateEmaValues(state.candles);if(!values)return;
+ emaBullSymbols.delete(symbol);emaBearSymbols.delete(symbol);
+ if(values.fast>values.mid&&values.mid>values.slow)emaBullSymbols.set(symbol,values);
+ else if(values.fast<values.mid&&values.mid<values.slow)emaBearSymbols.set(symbol,values);
+ renderEmaRows();
+}
+function renderEmaRows(){
+ const render=(items,kind)=>items.size?[...items.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([symbol,v])=>
+  '<div class="ema-item"><div><strong>'+symbol+'</strong><div class="'+(kind==='bull'?'positive':'negative')+'">'+(kind==='bull'?'BULLISH ALIGNMENT':'BEARISH ALIGNMENT')+'</div></div><div class="ema-meta">EMA 7: '+v.fast.toPrecision(7)+'<br>EMA 25: '+v.mid.toPrecision(7)+'<br>EMA 99: '+v.slow.toPrecision(7)+'</div></div>'
+ ).join(''):'<span class="note">No '+(kind==='bull'?'bullish':'bearish')+' alignment currently.</span>';
+ $('emaBullRows').innerHTML=render(emaBullSymbols,'bull');
+ $('emaBearRows').innerHTML=render(emaBearSymbols,'bear');
+ $('emaBullCount').textContent=String(emaBullSymbols.size);
+ $('emaBearCount').textContent=String(emaBearSymbols.size);
+ $('emaCandles').textContent=String(emaClosedCandles);
+}
+function processEmaKline(message){
+ const k=message&&message.k;
+ if(!k||k.i!==EMA_INTERVAL||!k.x)return;
+ const symbol=k.s,state=emaStates.get(symbol);if(!state)return;
+ const closeTime=Number(k.T),close=Number(k.c);
+ if(!Number.isFinite(closeTime)||!Number.isFinite(close)||closeTime<=state.lastCloseTime)return;
+ state.candles.push({close,closeTime});
+ if(state.candles.length>EMA_SEED_LIMIT+20)state.candles.splice(0,state.candles.length-(EMA_SEED_LIMIT+20));
+ state.lastCloseTime=closeTime;emaClosedCandles++;
+ updateEmaAlignment(symbol);
+}
+function handleEmaSocketMessage(event){
+ let payload;try{payload=JSON.parse(event.data)}catch(error){return}
+ if(payload&&payload.data)processEmaKline(payload.data);
+}
+function closeEmaSocket(){
+ clearTimeout(emaRenewTimer);const socket=emaSocket;emaSocket=null;
+ if(socket){socket.onclose=null;try{socket.close()}catch(error){}}
+}
+function connectEmaSocket(){
+ if(!emaMonitoringEnabled||!emaWantedSymbols.size)return;
+ clearTimeout(emaReconnectTimer);closeEmaSocket();
+ const streams=[...emaWantedSymbols].map(symbol=>symbol.toLowerCase()+'@kline_'+EMA_INTERVAL);
+ if(streams.length>1024){emaSetStatus('Cannot connect: Binance allows a maximum of 1,024 streams per connection.');return}
+ const socket=new WebSocket(EMA_WS_BASE+streams.join('/'));emaSocket=socket;
+ emaSetStatus('Connecting to Binance 1m candle streams for '+streams.length+' RSI-qualified coins…');
+ socket.onopen=()=>{
+  if(emaSocket!==socket)return;
+  emaReconnectDelay=1500;emaSetStatus('Live · receiving '+streams.length+' EMA 1m candle streams.',true);
+  clearTimeout(emaRenewTimer);emaRenewTimer=setTimeout(()=>{if(emaSocket===socket)socket.close()},23*60*60*1000+50*60*1000);
+ };
+ socket.onmessage=event=>{if(emaSocket===socket)handleEmaSocketMessage(event)};
+ socket.onerror=()=>{if(emaSocket===socket)emaSetStatus('WebSocket error. Waiting for Binance connection recovery.')};
+ socket.onclose=()=>{
+  if(emaSocket!==socket)return;
+  emaSocket=null;clearTimeout(emaRenewTimer);
+  if(emaMonitoringEnabled&&emaWantedSymbols.size){
+   const delay=emaReconnectDelay;emaReconnectDelay=Math.min(emaReconnectDelay*2,30000);
+   emaSetStatus('WebSocket disconnected. Reconnecting in '+Math.ceil(delay/1000)+' seconds…');
+   emaReconnectTimer=setTimeout(connectEmaSocket,delay);
+  }else emaSetStatus('WebSocket stopped.');
+ };
+}
+async function syncEmaUniverse(universe){
+ if(!emaMonitoringEnabled)return;
+ const next=new Set(universe.map(item=>item.symbol));
+ const added=[...next].filter(symbol=>!emaStates.has(symbol));
+ const removed=[...emaWantedSymbols].filter(symbol=>!next.has(symbol));
+ if(!added.length&&!removed.length&&emaSocket&&[WebSocket.CONNECTING,WebSocket.OPEN].includes(emaSocket.readyState)){
+  $('emaMonitored').textContent=String(next.size);return;
+ }
+ for(const symbol of removed){emaStates.delete(symbol);emaBullSymbols.delete(symbol);emaBearSymbols.delete(symbol)}
+ emaWantedSymbols=next;$('emaMonitored').textContent=String(next.size);renderEmaRows();
+ if(!next.size){closeEmaSocket();emaSetStatus('Waiting for RSI-qualified candidates.');return}
+ if(added.length){
+  emaSetStatus('Seeding 1m candle history for '+added.length+' new RSI-qualified coins…');
+  const seeded=await mapLimit(added,requestConcurrency,async symbol=>{
+   const rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(symbol)+'&interval='+EMA_INTERVAL+'&limit='+EMA_SEED_LIMIT);
+   if(!Array.isArray(rows))throw new Error('Invalid candle history');
+   const now=Date.now(),candles=rows.filter(row=>Number(row[6])<now).map(row=>({close:Number(row[4]),closeTime:Number(row[6])}));
+   if(candles.length<EMA_SLOW)throw new Error('Insufficient closed candle history');
+   return {symbol,candles,lastCloseTime:candles[candles.length-1].closeTime};
+  });
+  let success=0,failed=[];
+  seeded.output.forEach((result,index)=>{
+   if(result&&!result.error){emaStates.set(result.symbol,result);updateEmaAlignment(result.symbol);success++}
+   else failed.push(added[index]+': '+(result&&result.error||'seed failed'));
+  });
+  if(failed.length)emaSetStatus('Seeded '+success+'/'+added.length+' new coins. '+failed.slice(0,3).join(' · '));
+ }
+ const active=[...emaWantedSymbols].filter(symbol=>emaStates.has(symbol));
+ emaWantedSymbols=new Set(active);$('emaMonitored').textContent=String(active.length);
+ if(!active.length){closeEmaSocket();emaSetStatus('No RSI candidates could be initialized.');return}
+ connectEmaSocket();
+}
+function stopEmaMonitor(){
+ emaMonitoringEnabled=false;clearTimeout(emaReconnectTimer);clearTimeout(emaRenewTimer);closeEmaSocket();
+ emaWantedSymbols.clear();emaStates.clear();emaBullSymbols.clear();emaBearSymbols.clear();
+ $('emaMonitored').textContent='0';renderEmaRows();emaSetStatus('EMA monitor stopped.');
+}
+
 function renderUniverse(universe){
  $('universeCount').textContent=universe.length;
  $('universeRows').innerHTML=universe.length?universe.map((item,index)=>'<tr><td>'+(index+1)+'</td><td class="'+(item.change>=0?'positive':'negative')+'">'+(item.change>=0?'GAINER':'LOSER')+'</td><td><b>'+item.symbol+'</b></td><td class="num '+(item.change>=0?'positive':'negative')+'">'+(item.change>=0?'+':'')+fmt(item.change)+'%</td><td>'+fmt(item.volume)+'</td></tr>').join(''):'<tr><td colspan="5" class="muted">No contracts passed the current universe settings.</td></tr>';
@@ -543,9 +692,9 @@ async function loadUniverse(){
   }else if(!running)setRunning(false);
  }
 }
-$('start').addEventListener('click',()=>{if(running)return;macdMonitoringEnabled=true;rsiMonitoringEnabled=true;running=true;stopRequested=false;clearTimeout(loopTimer);setRunning(true);loadUniverse()});
-$('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}macdMonitoringEnabled=true;rsiMonitoringEnabled=true;stopRequested=false;loadUniverse()});
-$('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);stopMacdMonitor();stopRsiMonitor();setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
+$('start').addEventListener('click',()=>{if(running)return;macdMonitoringEnabled=true;emaMonitoringEnabled=true;rsiMonitoringEnabled=true;running=true;stopRequested=false;clearTimeout(loopTimer);setRunning(true);loadUniverse()});
+$('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}macdMonitoringEnabled=true;emaMonitoringEnabled=true;rsiMonitoringEnabled=true;stopRequested=false;loadUniverse()});
+$('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);stopMacdMonitor();stopEmaMonitor();stopRsiMonitor();setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
 $('save').addEventListener('click',saveSettings);
 $('macdCandleWindow').addEventListener('change',()=>{
  pruneMacdEvents();renderMacdEvents();
