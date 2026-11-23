@@ -74,14 +74,14 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 
 <section class="panel monitor-panel" id="rsiMonitorPanel">
  <div class="top"><h2 style="font-size:16px;margin:0">RSI MOMENTUM MONITOR</h2><div class="macd-state"><span class="macd-dot" id="rsiWsDot"></span><b id="rsiWsState">Not connected</b></div></div>
- <div class="note">RSI(14) · 1m + 3m + 5m · closed candles · a coin qualifies when ANY one of the 1m, 3m or 5m RSI values is strictly above 70</div>
+ <div class="note">RSI(14) · 3m + 5m + 15m · closed candles · a coin qualifies when ANY one of the 3m, 5m or 15m RSI values is strictly above 70</div>
  <div class="stats" style="margin-top:10px">
   <span>Monitored coins: <b id="rsiMonitored">0</b></span>
   <span>Qualified coins: <b id="rsiQualified">0</b></span>
   <span>Closed candles processed: <b id="rsiCandles">0</b></span>
  </div>
  <div class="status" id="rsiStatus">Start scanning to seed RSI history and connect the Binance market WebSocket.</div>
- <div class="wrap" style="margin-top:10px"><table style="min-width:520px"><thead><tr><th>SYMBOL</th><th>1M RSI</th><th>3M RSI</th><th>5M RSI</th><th>STATUS</th></tr></thead><tbody id="rsiQualifiedRows"><tr><td colspan="5" class="muted">No qualifying coins yet.</td></tr></tbody></table></div>
+ <div class="wrap" style="margin-top:10px"><table style="min-width:520px"><thead><tr><th>SYMBOL</th><th>3M RSI</th><th>5M RSI</th><th>15M RSI</th><th>STATUS</th></tr></thead><tbody id="rsiQualifiedRows"><tr><td colspan="5" class="muted">No qualifying coins yet.</td></tr></tbody></table></div>
 </section>
 
 <section class="panel monitor-panel" id="macdMonitorPanel">
@@ -155,9 +155,9 @@ async function mapLimit(items,limit,fn){
  return {output,done,peak};
 }
 
-/* RSI momentum monitor: RSI(14) is calculated from closed 1m/3m/5m candles.
+/* RSI momentum monitor: RSI(14) is calculated from closed 3m/5m/15m candles.
    REST seeds history; Binance market WebSocket supplies all live candle updates. */
-const RSI_PERIOD=14,RSI_INTERVALS=['1m','3m','5m'],RSI_SEED_LIMIT=100;
+const RSI_PERIOD=14,RSI_INTERVALS=['3m','5m','15m'],RSI_SEED_LIMIT=100;
 const RSI_WS_BASE='wss://fstream.binance.com/market/stream?streams=';
 let rsiMonitoringEnabled=false,rsiSocket=null,rsiReconnectTimer=null,rsiRenewTimer=null;
 let rsiReconnectDelay=1500,rsiWantedSymbols=new Set(),rsiStates=new Map();
@@ -227,7 +227,7 @@ function connectRsiSocket(){
  rsiSetStatus('Connecting to Binance market WebSocket for '+streams.length+' RSI candle streams…');
  socket.onopen=()=>{
   if(rsiSocket!==socket)return;rsiReconnectDelay=1500;
-  rsiSetStatus('Live · receiving closed 1m, 3m and 5m candles for '+rsiWantedSymbols.size+' coins.',true);
+  rsiSetStatus('Live · receiving closed 3m, 5m and 15m candles for '+rsiWantedSymbols.size+' coins.',true);
   clearTimeout(rsiRenewTimer);rsiRenewTimer=setTimeout(()=>{if(rsiSocket===socket)socket.close()},23*60*60*1000+50*60*1000);
  };
  socket.onmessage=event=>{
@@ -257,7 +257,7 @@ async function syncRsiUniverse(universe){
  rsiWantedSymbols=next;$('rsiMonitored').textContent=String(next.size);renderRsiQualified();
  if(!next.size){closeRsiSocket();rsiSetStatus('No coins are currently selected in the market universe.');return}
  if(added.length){
-  rsiSetStatus('Seeding RSI(14) history for '+added.length+' newly selected coins across 1m, 3m and 5m…');
+  rsiSetStatus('Seeding RSI(14) history for '+added.length+' newly selected coins across 3m, 5m and 15m…');
   const tasks=added.flatMap(symbol=>RSI_INTERVALS.map(interval=>({symbol,interval})));
   const seeded=await mapLimit(tasks,requestConcurrency,async task=>{
    const rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(task.symbol)+'&interval='+task.interval+'&limit='+RSI_SEED_LIMIT);
