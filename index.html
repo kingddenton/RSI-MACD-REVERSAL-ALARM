@@ -72,6 +72,18 @@ table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;
 </details>
 
 
+<section class="panel monitor-panel" id="rsiMonitorPanel">
+ <div class="top"><h2 style="font-size:16px;margin:0">RSI MOMENTUM MONITOR</h2><div class="macd-state"><span class="macd-dot" id="rsiWsDot"></span><b id="rsiWsState">Not connected</b></div></div>
+ <div class="note">RSI(14) · 1m + 3m + 5m · closed candles · a coin qualifies only when all three RSI values are strictly above 70</div>
+ <div class="stats" style="margin-top:10px">
+  <span>Monitored coins: <b id="rsiMonitored">0</b></span>
+  <span>Qualified coins: <b id="rsiQualified">0</b></span>
+  <span>Closed candles processed: <b id="rsiCandles">0</b></span>
+ </div>
+ <div class="status" id="rsiStatus">Start scanning to seed RSI history and connect the Binance market WebSocket.</div>
+ <div class="wrap" style="margin-top:10px"><table style="min-width:520px"><thead><tr><th>SYMBOL</th><th>1M RSI</th><th>3M RSI</th><th>5M RSI</th><th>STATUS</th></tr></thead><tbody id="rsiQualifiedRows"><tr><td colspan="5" class="muted">No qualifying coins yet.</td></tr></tbody></table></div>
+</section>
+
 <section class="panel monitor-panel" id="macdMonitorPanel">
  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
   <div><h2 style="font-size:16px;margin:0">MACD CROSSOVER MONITOR</h2>
@@ -141,6 +153,138 @@ async function mapLimit(items,limit,fn){
  async function worker(){while(!stopRequested){const index=next++;if(index>=items.length)return;active++;peak=Math.max(peak,active);try{output[index]=await fn(items[index])}catch(error){output[index]={error:error.message}}finally{active--;done++}}}
  await Promise.all(Array.from({length:Math.min(Math.max(1,limit),items.length)},worker));
  return {output,done,peak};
+}
+
+/* RSI momentum monitor: RSI(14) is calculated from closed 1m/3m/5m candles.
+   REST seeds history; Binance market WebSocket supplies all live candle updates. */
+const RSI_PERIOD=14,RSI_INTERVALS=['1m','3m','5m'],RSI_SEED_LIMIT=100;
+const RSI_WS_BASE='wss://fstream.binance.com/market/stream?streams=';
+let rsiMonitoringEnabled=false,rsiSocket=null,rsiReconnectTimer=null,rsiRenewTimer=null;
+let rsiReconnectDelay=1500,rsiWantedSymbols=new Set(),rsiStates=new Map();
+let rsiQualifiedMap=new Map(),rsiClosedCandles=0;
+function rsiSetStatus(message,connected=false){
+ $('rsiStatus').textContent=message;
+ $('rsiWsState').textContent=connected?'Connected':'Disconnected';
+ $('rsiWsDot').className='macd-dot'+(connected?' live':'');
+}
+function calculateRsi(closes,period=RSI_PERIOD){
+ if(closes.length<period+1)return null;
+ let gain=0,loss=0;
+ for(let i=1;i<=period;i++){const change=closes[i]-closes[i-1];if(change>0)gain+=change;else loss-=change}
+ let avgGain=gain/period,avgLoss=loss/period;
+ for(let i=period+1;i<closes.length;i++){
+  const change=closes[i]-closes[i-1];
+  avgGain=(avgGain*(period-1)+Math.max(0,change))/period;
+  avgLoss=(avgLoss*(period-1)+Math.max(0,-change))/period;
+ }
+ if(avgLoss===0)return avgGain===0?50:100;
+ if(avgGain===0)return 0;
+ return 100-(100/(1+avgGain/avgLoss));
+}
+function rsiValuesFor(symbol){
+ const state=rsiStates.get(symbol);if(!state)return null;
+ const values={};
+ for(const interval of RSI_INTERVALS){
+  const candles=state[interval]||[];
+  values[interval]=calculateRsi(candles.map(c=>c.close));
+ }
+ return values;
+}
+function renderRsiQualified(){
+ const rows=[...rsiQualifiedMap.values()].sort((a,b)=>Math.min(b['1m'],b['3m'],b['5m'])-Math.min(a['1m'],a['3m'],a['5m']));
+ $('rsiQualified').textContent=String(rows.length);
+ $('rsiQualifiedRows').innerHTML=rows.length?rows.map(row=>'<tr><td><b>'+row.symbol+'</b></td><td class="positive num">'+row['1m'].toFixed(2)+'</td><td class="positive num">'+row['3m'].toFixed(2)+'</td><td class="positive num">'+row['5m'].toFixed(2)+'</td><td class="positive">QUALIFIED</td></tr>').join(''):'<tr><td colspan="5" class="muted">No coins currently have RSI above 70 on all three timeframes.</td></tr>';
+ $('rsiCandles').textContent=String(rsiClosedCandles);
+}
+function evaluateRsiSymbol(symbol){
+ const values=rsiValuesFor(symbol);
+ if(!values||RSI_INTERVALS.some(tf=>values[tf]===null)){rsiQualifiedMap.delete(symbol);renderRsiQualified();return}
+ if(RSI_INTERVALS.every(tf=>values[tf]>70))rsiQualifiedMap.set(symbol,{symbol,...values});
+ else rsiQualifiedMap.delete(symbol);
+ renderRsiQualified();
+}
+function processRsiKline(message){
+ const k=message&&message.k;
+ if(!k||!k.x||!RSI_INTERVALS.includes(k.i))return;
+ const state=rsiStates.get(k.s);if(!state)return;
+ const closeTime=Number(k.T),close=Number(k.c);
+ if(!Number.isFinite(closeTime)||!Number.isFinite(close))return;
+ const candles=state[k.i];if(candles.length&&closeTime<=candles[candles.length-1].closeTime)return;
+ candles.push({close,closeTime});if(candles.length>RSI_SEED_LIMIT+20)candles.splice(0,candles.length-(RSI_SEED_LIMIT+20));
+ rsiClosedCandles++;evaluateRsiSymbol(k.s);
+}
+function closeRsiSocket(){
+ clearTimeout(rsiRenewTimer);const socket=rsiSocket;rsiSocket=null;
+ if(socket){socket.onclose=null;try{socket.close()}catch(error){}}
+}
+function connectRsiSocket(){
+ if(!rsiMonitoringEnabled||!rsiWantedSymbols.size)return;
+ clearTimeout(rsiReconnectTimer);closeRsiSocket();
+ const streams=[];
+ for(const symbol of rsiWantedSymbols)for(const interval of RSI_INTERVALS)streams.push(symbol.toLowerCase()+'@kline_'+interval);
+ if(streams.length>1024){rsiSetStatus('Cannot connect: selected universe exceeds Binance’s 1,024-stream connection limit.');return}
+ const socket=new WebSocket(RSI_WS_BASE+streams.join('/'));rsiSocket=socket;
+ rsiSetStatus('Connecting to Binance market WebSocket for '+streams.length+' RSI candle streams…');
+ socket.onopen=()=>{
+  if(rsiSocket!==socket)return;rsiReconnectDelay=1500;
+  rsiSetStatus('Live · receiving closed 1m, 3m and 5m candles for '+rsiWantedSymbols.size+' coins.',true);
+  clearTimeout(rsiRenewTimer);rsiRenewTimer=setTimeout(()=>{if(rsiSocket===socket)socket.close()},23*60*60*1000+50*60*1000);
+ };
+ socket.onmessage=event=>{
+  if(rsiSocket!==socket)return;
+  let payload;try{payload=JSON.parse(event.data)}catch(error){return}
+  if(payload&&payload.data)processRsiKline(payload.data);
+ };
+ socket.onerror=()=>{if(rsiSocket===socket)rsiSetStatus('WebSocket error. Waiting for Binance connection recovery.')};
+ socket.onclose=()=>{
+  if(rsiSocket!==socket)return;rsiSocket=null;clearTimeout(rsiRenewTimer);
+  if(rsiMonitoringEnabled&&rsiWantedSymbols.size){
+   const delay=rsiReconnectDelay;rsiReconnectDelay=Math.min(rsiReconnectDelay*2,30000);
+   rsiSetStatus('WebSocket disconnected. Reconnecting in '+Math.ceil(delay/1000)+' seconds…');
+   rsiReconnectTimer=setTimeout(connectRsiSocket,delay);
+  }else rsiSetStatus('RSI monitor stopped.');
+ };
+}
+async function syncRsiUniverse(universe){
+ if(!rsiMonitoringEnabled)return;
+ const next=new Set(universe.map(item=>item.symbol));
+ const added=[...next].filter(symbol=>!rsiStates.has(symbol));
+ const removed=[...rsiWantedSymbols].filter(symbol=>!next.has(symbol));
+ if(!added.length&&!removed.length&&rsiSocket&&[WebSocket.CONNECTING,WebSocket.OPEN].includes(rsiSocket.readyState)){
+  $('rsiMonitored').textContent=String(next.size);return;
+ }
+ for(const symbol of removed){rsiStates.delete(symbol);rsiQualifiedMap.delete(symbol)}
+ rsiWantedSymbols=next;$('rsiMonitored').textContent=String(next.size);renderRsiQualified();
+ if(!next.size){closeRsiSocket();rsiSetStatus('No coins are currently selected in the market universe.');return}
+ if(added.length){
+  rsiSetStatus('Seeding RSI(14) history for '+added.length+' newly selected coins across 1m, 3m and 5m…');
+  const tasks=added.flatMap(symbol=>RSI_INTERVALS.map(interval=>({symbol,interval})));
+  const seeded=await mapLimit(tasks,requestConcurrency,async task=>{
+   const rows=await getJson(API+'/fapi/v1/klines?symbol='+encodeURIComponent(task.symbol)+'&interval='+task.interval+'&limit='+RSI_SEED_LIMIT);
+   if(!Array.isArray(rows))throw new Error('Invalid candle history');
+   const now=Date.now(),candles=rows.filter(row=>Number(row[6])<now).map(row=>({close:Number(row[4]),closeTime:Number(row[6])}));
+   if(candles.length<RSI_PERIOD+1)throw new Error('Insufficient '+task.interval+' candle history');
+   return {...task,candles};
+  });
+  const failed=new Set();
+  seeded.output.forEach((result,index)=>{
+   const task=tasks[index];if(!result||result.error){failed.add(task.symbol);return}
+   if(!rsiStates.has(task.symbol))rsiStates.set(task.symbol,{});
+   const state=rsiStates.get(task.symbol);state[result.interval]=result.candles;
+  });
+  for(const symbol of added)if(failed.has(symbol)||!RSI_INTERVALS.every(tf=>rsiStates.get(symbol)&&rsiStates.get(symbol)[tf]))rsiStates.delete(symbol);
+  for(const symbol of added)if(rsiStates.has(symbol))evaluateRsiSymbol(symbol);
+  if(failed.size)rsiSetStatus('RSI history seeded with '+(added.length-failed.size)+'/'+added.length+' coins; '+failed.size+' failed. See browser network console if persistent.');
+ }
+ const active=[...rsiWantedSymbols].filter(symbol=>rsiStates.has(symbol));
+ rsiWantedSymbols=new Set(active);$('rsiMonitored').textContent=String(active.length);
+ if(!active.length){closeRsiSocket();rsiSetStatus('No coins could be initialized. Check Binance REST access.');return}
+ connectRsiSocket();
+}
+function stopRsiMonitor(){
+ rsiMonitoringEnabled=false;clearTimeout(rsiReconnectTimer);clearTimeout(rsiRenewTimer);closeRsiSocket();
+ rsiWantedSymbols.clear();rsiStates.clear();rsiQualifiedMap.clear();
+ $('rsiMonitored').textContent='0';renderRsiQualified();rsiSetStatus('RSI monitor stopped.');
 }
 
 /* MACD crossover monitor: REST is used only to seed historical closes.
@@ -349,6 +493,7 @@ async function loadUniverse(){
   $('eligible').textContent=eligible.length;$('selected').textContent=universe.length;$('eligibleCount').textContent=eligible.length;
   $('universeRule').textContent='Top '+top.length+' / Bottom '+bottom.length+' · 24H price change';
   $('volumeRule').textContent=fmt(minVolume)+' USDT';renderUniverse(universe);
+  await syncRsiUniverse(universe);
   await syncMacdUniverse(universe);
   const duration=(Date.now()-started)/1000;
   $('last').textContent=new Date().toLocaleTimeString();
@@ -368,9 +513,9 @@ async function loadUniverse(){
   }else if(!running)setRunning(false);
  }
 }
-$('start').addEventListener('click',()=>{if(running)return;macdMonitoringEnabled=true;running=true;stopRequested=false;clearTimeout(loopTimer);setRunning(true);loadUniverse()});
-$('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}macdMonitoringEnabled=true;stopRequested=false;loadUniverse()});
-$('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);stopMacdMonitor();setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
+$('start').addEventListener('click',()=>{if(running)return;macdMonitoringEnabled=true;rsiMonitoringEnabled=true;running=true;stopRequested=false;clearTimeout(loopTimer);setRunning(true);loadUniverse()});
+$('once').addEventListener('click',()=>{if(running){setStatus('Stop continuous scanning before using Scan universe once.');return}macdMonitoringEnabled=true;rsiMonitoringEnabled=true;stopRequested=false;loadUniverse()});
+$('stop').addEventListener('click',()=>{running=false;stopRequested=true;clearTimeout(loopTimer);setRunning(false);stopMacdMonitor();stopRsiMonitor();setStatus(scanBusy?'Stop requested. Current market-data requests will finish.':'Scanner stopped.')});
 $('save').addEventListener('click',saveSettings);
 $('macdCandleWindow').addEventListener('change',()=>{pruneMacdEvents();renderMacdEvents()});
 $('macdCandleMode').addEventListener('change',()=>{
